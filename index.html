@@ -2065,6 +2065,43 @@ input[type="checkbox"]:focus-visible {
 }
 .tx-filter-clear { align-self: center; }
 
+/* Tappable category chips for multi-select filtering */
+.tx-cat-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin-bottom: 14px;
+}
+.tx-cat-chips:empty { display: none; }
+.tx-cat-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 12px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text-muted);
+  font-family: 'Manrope', system-ui, sans-serif;
+  font-size: 0.8rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s;
+  user-select: none;
+}
+.tx-cat-chip:hover { border-color: var(--border-strong); color: var(--text); }
+.tx-cat-chip.on {
+  border-color: var(--accent);
+  color: var(--text);
+  font-weight: 600;
+  box-shadow: 0 0 0 2px var(--accent-tint);
+}
+.tx-cat-chip .chip-dot {
+  width: 9px; height: 9px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+}
+
 /* ── Card hint (keyboard shortcuts) ── */
 .card-hint {
   font-family: 'Manrope', system-ui, sans-serif;
@@ -3007,7 +3044,6 @@ tr:hover td {
     <!-- Compact filter row — collapses into card seamlessly -->
     <div class="tx-filter-row">
       <input id="filterSearch" placeholder="🔍 Search notes or category…" class="tx-filter-search">
-      <select id="filterCat" class="tx-filter-select"><option value="">All categories</option></select>
       <select id="filterType" class="tx-filter-select">
         <option value="">All types</option>
         <option value="expense">Expense</option>
@@ -3015,6 +3051,9 @@ tr:hover td {
       </select>
       <button type="button" class="btn btn-ghost btn-sm tx-filter-clear" onclick="clearFilters()" hidden id="filterClearBtn">✕ Clear filters</button>
     </div>
+
+    <!-- Tap one or more categories to combine their totals. None selected = all shown. -->
+    <div class="tx-cat-chips" id="filterCatChips"></div>
 
     <div id="filterTotals"></div>
     <div class="tx-grouped" id="txGroupedList"><div class="empty-state">Sign in to load data</div></div>
@@ -4133,8 +4172,6 @@ function populateSelects() {
   const type=document.getElementById('txType').value;
   const cats=type==='income'?INCOME_CATS:EXPENSE_CATS;
   document.getElementById('txCategory').innerHTML=cats.map(c=>`<option value="${escH(c)}">${escH(c)}</option>`).join('');
-  document.getElementById('filterCat').innerHTML='<option value="">All Categories</option>'+
-    [...EXPENSE_CATS,...INCOME_CATS].map(c=>`<option value="${escH(c)}">${escH(c)}</option>`).join('');
   document.getElementById('fixedCat').innerHTML=EXPENSE_CATS.map(c=>`<option value="${escH(c)}">${escH(c)}</option>`).join('');
   document.getElementById('incCat').innerHTML=INCOME_CATS.map(c=>`<option value="${escH(c)}">${escH(c)}</option>`).join('');
   document.getElementById('entryModeBadge').textContent=type==='income'?'Income':'Expense';
@@ -5862,13 +5899,51 @@ document.getElementById('exportAllExcelBtn')?.addEventListener('click', download
 // ════════════════════════════════════════════════
 // FILTERS
 // ════════════════════════════════════════════════
+// Categories the user has tapped on. Empty = show all.
+let selectedCats = new Set();
+
+// Build the tappable category chips from the categories that actually
+// appear in the current month (transactions + fixed expenses).
+function renderCategoryChips() {
+  const wrap = document.getElementById('filterCatChips');
+  if (!wrap) return;
+  if (!canViewPrivateData()) { wrap.innerHTML = ''; return; }
+  const m = curMonth();
+  const present = new Set();
+  (m.transactions || []).forEach(t => { if (t.category) present.add(t.category); });
+  (m.fixedExpenses || []).forEach(f => { if (f.category) present.add(f.category); });
+  // Drop any selections that no longer exist in this month.
+  [...selectedCats].forEach(c => { if (!present.has(c)) selectedCats.delete(c); });
+  const list = [...present].sort();
+  if (!list.length) { wrap.innerHTML = ''; return; }
+  wrap.innerHTML = list.map(c => {
+    const on = selectedCats.has(c);
+    const color = CAT_COLORS[c] || '#ccc';
+    const icon = CAT_ICONS[c] || '🏷️';
+    return `<button type="button" class="tx-cat-chip${on ? ' on' : ''}" data-cat="${escH(c)}">
+      <span class="chip-dot" style="background:${color}"></span>${icon} ${escH(c)}
+    </button>`;
+  }).join('');
+}
+
+function toggleCatChip(cat) {
+  if (selectedCats.has(cat)) selectedCats.delete(cat);
+  else selectedCats.add(cat);
+  renderTransactionTable();
+}
+
 function clearFilters() {
-  document.getElementById('filterCat').value='';
+  selectedCats.clear();
   document.getElementById('filterType').value='';
   document.getElementById('filterSearch').value='';
   renderTransactionTable();
 }
-['filterCat','filterType'].forEach(id=>document.getElementById(id).addEventListener('change',renderTransactionTable));
+// One delegated listener handles every chip, even after re-render.
+document.getElementById('filterCatChips').addEventListener('click', e => {
+  const chip = e.target.closest('.tx-cat-chip');
+  if (chip) toggleCatChip(chip.dataset.cat);
+});
+document.getElementById('filterType').addEventListener('change',renderTransactionTable);
 document.getElementById('filterSearch').addEventListener('input',renderTransactionTable);
 
 // ════════════════════════════════════════════════
@@ -6261,16 +6336,17 @@ function renderTransactionTable() {
   if (!canViewPrivateData()) {
     list.innerHTML = '<div class="empty-state"><div class="e-icon">🔒</div>Login required</div>';
     if (totalsEl) totalsEl.innerHTML = '';
+    renderCategoryChips();
     return;
   }
 
-  const filterCat = document.getElementById('filterCat').value;
+  renderCategoryChips();
   const filterType = document.getElementById('filterType').value;
   const search = document.getElementById('filterSearch').value.toLowerCase();
   // Show/hide the Clear filters button based on whether any filter is active
   const clearBtn = document.getElementById('filterClearBtn');
   if (clearBtn) {
-    if (filterCat || filterType || search) clearBtn.removeAttribute('hidden');
+    if (selectedCats.size || filterType || search) clearBtn.removeAttribute('hidden');
     else clearBtn.setAttribute('hidden', '');
   }
   const m = curMonth();
@@ -6295,18 +6371,23 @@ function renderTransactionTable() {
   }));
   txs = txs.concat(virtualFixed).sort((a, b) => new Date(b.date) - new Date(a.date));
 
-  if (filterCat)  txs = txs.filter(t => t.category === filterCat);
+  if (selectedCats.size) txs = txs.filter(t => selectedCats.has(t.category));
   if (filterType) txs = txs.filter(t => t.type === filterType);
   if (search)     txs = txs.filter(t => (t.note || '').toLowerCase().includes(search) || (t.category || '').toLowerCase().includes(search));
 
   // ── Filter totals bar ──
   if (totalsEl) {
-    if (filterCat || filterType || search) {
+    if (selectedCats.size || filterType || search) {
       const incomeTotal  = txs.filter(t => t.type === 'income') .reduce((s, t) => s + (t.amountYen || toYen(t.amount, t.currency || 'JPY')), 0);
       const expenseTotal = txs.filter(t => t.type === 'expense').reduce((s, t) => s + (t.amountYen || toYen(t.amount, t.currency || 'JPY')), 0);
       const net = incomeTotal - expenseTotal;
       const labelParts = [];
-      if (filterCat)  labelParts.push(`${CAT_ICONS[filterCat] || '🏷️'} ${escH(filterCat)}`);
+      if (selectedCats.size) {
+        const names = [...selectedCats];
+        labelParts.push(names.length <= 3
+          ? names.map(c => `${CAT_ICONS[c] || '🏷️'} ${escH(c)}`).join(' + ')
+          : `${names.length} categories`);
+      }
       if (filterType) labelParts.push(filterType === 'income' ? '💚 Income' : '❤️ Expense');
       if (search)     labelParts.push(`"${escH(search)}"`);
       totalsEl.className = 'tx-totals-bar';
