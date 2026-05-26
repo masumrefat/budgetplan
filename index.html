@@ -3647,7 +3647,7 @@ let syncTimeout = null;
 let initialRemoteLoadDone = false;
 
 function createMonthTemplate(name) {
-  return { name, transactions: [], budgets: {}, fixedExpenses: [], plannedIncome: [] };
+  return { name, transactions: [], budgets: {}, budgetCurrencies: {}, fixedExpenses: [], plannedIncome: [] };
 }
 
 function createYearData() {
@@ -4981,7 +4981,7 @@ document.getElementById('saveBudgetBtn').addEventListener('click', ()=>{
   const m = curMonth();
   if(!m.budgetCurrencies) m.budgetCurrencies = {};
   document.querySelectorAll('.budget-input').forEach(inp=>{
-    m.budgets[inp.dataset.cat]=parseFloat(inp.value||0);
+    m.budgets[inp.dataset.cat]=parseFloat(inp.value||0) || 0;
   });
   document.querySelectorAll('.budget-currency-input').forEach(sel=>{
     m.budgetCurrencies[sel.dataset.cat] = sel.value;
@@ -6071,8 +6071,13 @@ function buildMonthWorkbook(monthIdx, year=currentYear) {
   XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(txRows.length?txRows:[{Info:'No transactions'}]), 'Transactions');
 
   const budgetRows=EXPENSE_CATS.map(cat=>{
-    const spent = month.transactions.filter(x=>x.type==='expense'&&x.category===cat).reduce((s,x)=>s+(x.amountYen||toYen(x.amount,x.currency||'JPY')),0);
-    return {Category:cat, 'Budget (JPY)': month.budgets?.[cat]||0, 'Spent (JPY)': Math.round(spent), 'Remaining (JPY)': Math.round((month.budgets?.[cat]||0)-spent)};
+    const txSpent = month.transactions.filter(x=>x.type==='expense'&&x.category===cat).reduce((s,x)=>s+(x.amountYen||toYen(x.amount,x.currency||'JPY')),0);
+    const fixedSpent = (month.fixedExpenses||[]).filter(x=>x.category===cat).reduce((s,x)=>s+toYen(x.amount,x.currency||'JPY'),0);
+    const spent = txSpent + fixedSpent;
+    const rawBudget = Number(month.budgets?.[cat] || 0);
+    const budgetCur = (month.budgetCurrencies && month.budgetCurrencies[cat]) || 'JPY';
+    const budgetYen = toYen(rawBudget, budgetCur);
+    return {Category:cat, 'Budget Amount': rawBudget, 'Budget Currency': budgetCur, 'Budget (JPY)': Math.round(budgetYen), 'Spent (JPY)': Math.round(spent), 'Remaining (JPY)': Math.round(budgetYen-spent)};
   });
   XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(budgetRows), 'Budget');
 
@@ -6429,11 +6434,16 @@ function renderBudgetProgress(byCat) {
   const el=document.getElementById('budgetProgressWrap');
   if(!el) return; // Element removed from dashboard
   if(!canViewPrivateData()){ el.innerHTML='<div class="empty-state"><div class="e-icon">🔒</div>Login to view budgets</div>'; return; }
-  const budgets=curMonth().budgets;
-  const cats=[...new Set([...Object.keys(budgets),...Object.keys(byCat)])].filter(c=>budgets[c]||byCat[c]);
+  const m = curMonth();
+  const budgets = m.budgets || {};
+  const budgetCurs = m.budgetCurrencies || {};
+  const cats=[...new Set([...Object.keys(budgets),...Object.keys(byCat)])].filter(c=>Number(budgets[c]||0)>0||Number(byCat[c]||0)>0);
   if(!cats.length){ el.innerHTML='<div class="empty-state"><div class="e-icon">📋</div>Set budgets in Budget tab</div>'; return; }
   el.innerHTML=cats.map(cat=>{
-    const budget=budgets[cat]||0, spent=byCat[cat]||0;
+    const rawBudget=Number(budgets[cat]||0);
+    const curCode=budgetCurs[cat]||'JPY';
+    const budget=toYen(rawBudget, curCode);
+    const spent=Number(byCat[cat]||0);
     const pct=budget>0?Math.min((spent/budget)*100,100):(spent>0?100:0);
     const fill=pct<50?'fill-ok':pct<80?'fill-warn':'fill-over';
     return `<div class="budget-row">
@@ -6517,8 +6527,13 @@ function renderEnvelopes(byCat) {
   if (!grid) return; // Element removed from dashboard
   const cats=EXPENSE_CATS.slice(0,6);
   if(!canViewPrivateData()){ grid.innerHTML='<div class="empty-state"><div class="e-icon">🔒</div>Login to view envelopes</div>'; return; }
+  const m = curMonth();
+  const budgetCurs = m.budgetCurrencies || {};
   grid.innerHTML=cats.map(cat=>{
-    const spent=byCat[cat]||0,budget=curMonth().budgets[cat]||0;
+    const spent=Number(byCat[cat]||0);
+    const rawBudget=Number((m.budgets||{})[cat]||0);
+    const curCode=budgetCurs[cat]||'JPY';
+    const budget=toYen(rawBudget, curCode);
     const pct=budget>0?Math.min((spent/budget)*100,100):0;
     const fillColor=pct<50?'#27ae60':pct<80?'#e67e22':'#c0392b';
     return `<div class="envelope-card" style="background:${CAT_COLORS[cat]||'#f5f5f5'}">
@@ -6945,7 +6960,11 @@ function getYearSummaryData(year=currentYear) {
     const txExpense = (m.transactions||[]).filter(x=>x.type==='expense').reduce((s,x)=>s+(x.amountYen||toYen(x.amount,x.currency||'JPY')),0);
     const fixed = (m.fixedExpenses||[]).reduce((s,x)=>s+toYen(x.amount,x.currency||'JPY'),0);
     const expense = txExpense + fixed;
-    const budget = Object.values(m.budgets||{}).reduce((s,v)=>s+Number(v||0),0);
+    const budget = EXPENSE_CATS.reduce((sum, cat) => {
+      const rawBudget = Number((m.budgets||{})[cat] || 0);
+      const budgetCur = (m.budgetCurrencies && m.budgetCurrencies[cat]) || 'JPY';
+      return sum + toYen(rawBudget, budgetCur);
+    }, 0);
     const txCount = (m.transactions||[]).length;
     const balance = income - expense;
     return { month: MONTHS[idx], income, expense, balance, budget, txCount, fixed };
