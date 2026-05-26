@@ -3406,7 +3406,7 @@ tr:hover td {
       <div class="modal-actions">
         <button type="button" class="btn btn-ghost" id="obmCancelBtn">✕ Cancel</button>
         <button type="button" class="btn btn-ghost" id="obmAdjustBtn">⚙️ Adjust Budgets</button>
-        <button type="button" class="btn btn-ghost" id="obmTransferBtn">↔ Transfer Extra</button>
+        <button type="button" class="btn btn-ghost" id="obmTransferBtn">↔ Transfer Budget</button>
         <button type="button" class="btn btn-primary" id="obmSaveAnywayBtn">✓ Save Anyway</button>
       </div>
     </div>
@@ -3430,8 +3430,8 @@ tr:hover td {
     <!-- STEP 3: Transfer extra budget view -->
     <div id="obmStepTransfer" hidden>
       <div class="modal-icon">↔</div>
-      <h2 class="modal-title">Transfer Extra Budget</h2>
-      <p class="modal-sub" id="obmTransferSubtitle">Move unused budget from another category into the over-budget category.</p>
+      <h2 class="modal-title">Transfer Budget</h2>
+      <p class="modal-sub" id="obmTransferSubtitle">Choose one or more categories and move budget into the over-budget category.</p>
 
       <div class="obm-adjust-list" id="obmTransferList"></div>
 
@@ -4376,20 +4376,22 @@ function yenToBudgetCurrencyAmount(yen, currency) {
   return safe;
 }
 
-function normalizeBudgetAmountForCurrency(amount, currency) {
-  const safe = Math.max(0, Number(amount || 0));
+function normalizeBudgetAmountForCurrency(amount, currency, allowNegative=false) {
+  const raw = Number(amount || 0);
+  const safe = allowNegative ? raw : Math.max(0, raw);
   return currency === 'EUR' ? Number(safe.toFixed(2)) : Math.round(safe);
 }
 
 // Add or remove budget by yen amount while preserving that category's stored currency.
-function applyBudgetYenDelta(monthObj, category, deltaYen) {
+function applyBudgetYenDelta(monthObj, category, deltaYen, allowNegative=false) {
   if (!monthObj.budgets) monthObj.budgets = {};
   if (!monthObj.budgetCurrencies) monthObj.budgetCurrencies = {};
   const cur = monthObj.budgetCurrencies[category] || 'JPY';
   const currentRaw = Number(monthObj.budgets[category] || 0);
   const currentYen = toYen(currentRaw, cur);
-  const newYen = Math.max(0, currentYen + Number(deltaYen || 0));
-  monthObj.budgets[category] = normalizeBudgetAmountForCurrency(yenToBudgetCurrencyAmount(newYen, cur), cur);
+  const nextYen = currentYen + Number(deltaYen || 0);
+  const newYen = allowNegative ? nextYen : Math.max(0, nextYen);
+  monthObj.budgets[category] = normalizeBudgetAmountForCurrency(yenToBudgetCurrencyAmount(newYen, cur), cur, allowNegative);
   monthObj.budgetCurrencies[category] = cur;
 }
 
@@ -4400,15 +4402,15 @@ function getTransferableBudgetSources(ctx) {
     .map(cat => {
       const budgetYen = getCategoryBudgetYen(m, cat);
       const spentYen = getCategorySpentYen(m, cat, editingTxId);
-      const extraYen = Math.max(0, budgetYen - spentYen);
+      const extraYen = budgetYen - spentYen;
       return { cat, budgetYen, spentYen, extraYen };
     })
-    .filter(x => x.extraYen > 0)
     .sort((a, b) => b.extraYen - a.extraYen);
 }
 
-// Show a guided transfer step: pick one category that has extra left, then move that room
-// into the category that is about to go over budget.
+// Show a guided transfer step: choose one or many categories and move any amount
+// into the category that is about to go over budget. This intentionally allows
+// transfers even when the source category has no extra left.
 function showTransferExtraStep() {
   if (!overBudgetContext) return;
   const ctx = overBudgetContext;
@@ -4424,74 +4426,67 @@ function showTransferExtraStep() {
   const sources = getTransferableBudgetSources(ctx);
 
   if (subtitle) {
-    subtitle.textContent = `Move unused budget into "${ctx.category}". Needed now: ${fmt(ctx.over)}.`;
-  }
-
-  if (!sources.length) {
-    list.innerHTML = `<div class="empty-state"><div class="e-icon">💡</div>No other category has extra budget left this month.</div>`;
-    summary.innerHTML = `You can still use <strong>Adjust Budgets</strong> to manually increase "${escH(ctx.category)}" or choose <strong>Save Anyway</strong>.`;
-    if (applyBtn) applyBtn.disabled = true;
-    return;
+    subtitle.textContent = `Choose one or more categories and transfer any amount into "${ctx.category}". Needed now: ${fmt(ctx.over)}.`;
   }
 
   if (applyBtn) applyBtn.disabled = false;
   list.innerHTML = sources.map((s, idx) => {
-    const defaultTransfer = Math.min(s.extraYen, ctx.over);
+    const defaultTransfer = idx === 0 ? Math.max(1, Math.round(ctx.over)) : 0;
+    const status = s.extraYen >= 0 ? `Extra ${fmt(s.extraYen)}` : `Already over ${fmt(Math.abs(s.extraYen))}`;
     return `<label class="obm-adjust-row ${idx === 0 ? 'highlight' : ''}" data-cat="${escH(s.cat)}" style="cursor:pointer;grid-template-columns:auto 1fr auto">
-      <input type="radio" name="obmTransferSource" value="${escH(s.cat)}" ${idx === 0 ? 'checked' : ''} style="width:18px;height:18px">
+      <input type="checkbox" class="obm-transfer-check" value="${escH(s.cat)}" ${idx === 0 ? 'checked' : ''} style="width:18px;height:18px">
       <div class="obm-adjust-name">
         <div class="obm-adjust-cat">${CAT_ICONS[s.cat] || ''} ${escH(s.cat)}</div>
-        <div class="obm-adjust-meta">Budget ${fmt(s.budgetYen)} · Spent ${fmt(s.spentYen)} · Extra ${fmt(s.extraYen)}</div>
+        <div class="obm-adjust-meta">Budget ${fmt(s.budgetYen)} · Spent ${fmt(s.spentYen)} · ${status}</div>
       </div>
-      <input type="number" class="obm-adjust-input obm-transfer-amount" data-cat="${escH(s.cat)}" value="${Math.round(defaultTransfer)}" min="1" max="${Math.floor(s.extraYen)}" step="1" aria-label="Transfer amount from ${escH(s.cat)}">
+      <input type="number" class="obm-adjust-input obm-transfer-amount" data-cat="${escH(s.cat)}" value="${defaultTransfer}" min="0" step="1" aria-label="Transfer amount from ${escH(s.cat)}">
     </label>`;
   }).join('');
 
-  const syncSelectedRow = () => {
-    list.querySelectorAll('.obm-adjust-row').forEach(row => {
-      const radio = row.querySelector('input[type="radio"]');
-      row.classList.toggle('highlight', !!radio?.checked);
-    });
-    updateTransferSummary();
-  };
-
   const updateTransferSummary = () => {
-    const selected = list.querySelector('input[name="obmTransferSource"]:checked');
-    if (!selected) {
-      summary.innerHTML = 'Choose one source category to transfer from.';
-      return;
-    }
-    const sourceCat = selected.value;
-    const source = sources.find(s => s.cat === sourceCat);
-    const amountInput = list.querySelector(`.obm-transfer-amount[data-cat="${CSS.escape(sourceCat)}"]`);
-    const transferYen = Math.max(0, Number(amountInput?.value || 0));
-    const cappedYen = Math.min(transferYen, source ? source.extraYen : 0);
-    const targetBudgetAfter = ctx.budgetYen + cappedYen;
+    const transfers = [];
+    list.querySelectorAll('.obm-adjust-row').forEach(row => {
+      const check = row.querySelector('.obm-transfer-check');
+      const amountInput = row.querySelector('.obm-transfer-amount');
+      const sourceCat = check?.value || amountInput?.dataset.cat || '';
+      const requestedYen = Math.max(0, Number(amountInput?.value || 0));
+      row.classList.toggle('highlight', !!check?.checked);
+      if (check?.checked && requestedYen > 0) {
+        transfers.push({ cat: sourceCat, amountYen: requestedYen });
+      }
+    });
+
+    const totalTransfer = transfers.reduce((sum, t) => sum + t.amountYen, 0);
+    const targetBudgetAfter = ctx.budgetYen + totalTransfer;
     const targetSpentAfter = ctx.alreadySpent + ctx.newAmtYen;
     const leftAfter = targetBudgetAfter - targetSpentAfter;
-    if (transferYen <= 0) {
-      summary.innerHTML = 'Enter an amount to transfer.';
-    } else if (source && transferYen > source.extraYen) {
-      summary.innerHTML = `<strong>Too much.</strong> ${escH(sourceCat)} only has ${fmt(source.extraYen)} extra available.`;
-    } else if (leftAfter >= 0) {
-      summary.innerHTML = `Transfer <strong>${fmt(cappedYen)}</strong> from <strong>${escH(sourceCat)}</strong> to <strong>${escH(ctx.category)}</strong>. After saving, ${fmt(leftAfter)} will remain in ${escH(ctx.category)}.`;
+
+    if (!transfers.length) {
+      summary.innerHTML = 'Choose one or more categories and enter transfer amounts.';
+      return;
+    }
+
+    const sourceText = transfers.map(t => `${escH(t.cat)}: <strong>${fmt(t.amountYen)}</strong>`).join(' · ');
+    if (leftAfter >= 0) {
+      summary.innerHTML = `Transfer total <strong>${fmt(totalTransfer)}</strong> to <strong>${escH(ctx.category)}</strong> from ${sourceText}. After saving, ${fmt(leftAfter)} will remain in ${escH(ctx.category)}.`;
     } else {
-      summary.innerHTML = `Transfer <strong>${fmt(cappedYen)}</strong> from <strong>${escH(sourceCat)}</strong> to <strong>${escH(ctx.category)}</strong>. This uses the available extra, but ${escH(ctx.category)} will still be over by <strong>${fmt(Math.abs(leftAfter))}</strong>.`;
+      summary.innerHTML = `Transfer total <strong>${fmt(totalTransfer)}</strong> to <strong>${escH(ctx.category)}</strong> from ${sourceText}. ${escH(ctx.category)} will still be over by <strong>${fmt(Math.abs(leftAfter))}</strong>, but the app will allow it.`;
     }
   };
 
-  list.querySelectorAll('input[name="obmTransferSource"]').forEach(radio => {
-    radio.addEventListener('change', syncSelectedRow);
+  list.querySelectorAll('.obm-transfer-check').forEach(check => {
+    check.addEventListener('change', updateTransferSummary);
   });
   list.querySelectorAll('.obm-transfer-amount').forEach(inp => {
     inp.addEventListener('input', updateTransferSummary);
     inp.addEventListener('focus', () => {
-      const radio = list.querySelector(`input[name="obmTransferSource"][value="${CSS.escape(inp.dataset.cat)}"]`);
-      if (radio) { radio.checked = true; syncSelectedRow(); }
+      const row = inp.closest('.obm-adjust-row');
+      const check = row?.querySelector('.obm-transfer-check');
+      if (check) { check.checked = true; updateTransferSummary(); }
     });
   });
 
-  syncSelectedRow();
+  updateTransferSummary();
   setTimeout(() => {
     const firstAmount = list.querySelector('.obm-adjust-row.highlight .obm-transfer-amount');
     if (firstAmount) { firstAmount.focus(); firstAmount.select(); }
@@ -4502,27 +4497,30 @@ function applyTransferExtraAndContinue() {
   if (!overBudgetContext) return;
   const ctx = overBudgetContext;
   const list = document.getElementById('obmTransferList');
-  const selected = list?.querySelector('input[name="obmTransferSource"]:checked');
-  if (!selected) { toast('Choose a source category first', true); return; }
+  const transfers = [];
 
-  const sourceCat = selected.value;
-  const sources = getTransferableBudgetSources(ctx);
-  const source = sources.find(s => s.cat === sourceCat);
-  const amountInput = list.querySelector(`.obm-transfer-amount[data-cat="${CSS.escape(sourceCat)}"]`);
-  const requestedYen = Math.max(0, Number(amountInput?.value || 0));
-  if (!source || requestedYen <= 0) { toast('Enter a transfer amount', true); return; }
-  if (requestedYen > source.extraYen) {
-    toast('That category does not have enough extra budget', true);
-    return;
-  }
+  list?.querySelectorAll('.obm-adjust-row').forEach(row => {
+    const check = row.querySelector('.obm-transfer-check');
+    const amountInput = row.querySelector('.obm-transfer-amount');
+    const sourceCat = check?.value || amountInput?.dataset.cat || '';
+    const requestedYen = Math.max(0, Number(amountInput?.value || 0));
+    if (check?.checked && sourceCat && requestedYen > 0) {
+      transfers.push({ cat: sourceCat, amountYen: requestedYen });
+    }
+  });
 
-  applyBudgetYenDelta(ctx.targetMonth, sourceCat, -requestedYen);
-  applyBudgetYenDelta(ctx.targetMonth, ctx.category, requestedYen);
+  if (!transfers.length) { toast('Choose at least one category and amount', true); return; }
+
+  const totalTransfer = transfers.reduce((sum, t) => sum + t.amountYen, 0);
+  transfers.forEach(t => {
+    applyBudgetYenDelta(ctx.targetMonth, t.cat, -t.amountYen, true);
+  });
+  applyBudgetYenDelta(ctx.targetMonth, ctx.category, totalTransfer, true);
 
   scheduleSave();
   budgetOverrideConfirmed = true;
   closeOverBudgetModal();
-  toast(`Transferred ${fmt(requestedYen)} from ${sourceCat} to ${ctx.category} ✓`);
+  toast(`Transferred ${fmt(totalTransfer)} to ${ctx.category} ✓`);
   document.getElementById('entryForm').requestSubmit();
 }
 
