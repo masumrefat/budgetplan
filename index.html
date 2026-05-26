@@ -4405,12 +4405,14 @@ function getTransferableBudgetSources(ctx) {
       const extraYen = budgetYen - spentYen;
       return { cat, budgetYen, spentYen, extraYen };
     })
+    // Only show categories that really have money left to transfer.
+    .filter(s => s.extraYen > 0)
     .sort((a, b) => b.extraYen - a.extraYen);
 }
 
-// Show a guided transfer step: choose one or many categories and move any amount
-// into the category that is about to go over budget. This intentionally allows
-// transfers even when the source category has no extra left.
+// Show a guided transfer step: choose one or many categories and move extra budget
+// into the category that is about to go over budget. Each source defaults to its
+// full available extra, so checking a row means "transfer all extra from here".
 function showTransferExtraStep() {
   if (!overBudgetContext) return;
   const ctx = overBudgetContext;
@@ -4429,17 +4431,24 @@ function showTransferExtraStep() {
     subtitle.textContent = `Choose one or more categories and transfer any amount into "${ctx.category}". Needed now: ${fmt(ctx.over)}.`;
   }
 
+  if (!sources.length) {
+    if (applyBtn) applyBtn.disabled = true;
+    list.innerHTML = '<div class="empty-state"><div class="e-icon">↔</div>No category has extra budget available to transfer.</div>';
+    summary.innerHTML = 'There is no extra budget in another category. Use Adjust Budgets or Save Anyway.';
+    return;
+  }
+
   if (applyBtn) applyBtn.disabled = false;
   list.innerHTML = sources.map((s, idx) => {
-    const defaultTransfer = idx === 0 ? Math.max(1, Math.round(ctx.over)) : 0;
-    const status = s.extraYen >= 0 ? `Extra ${fmt(s.extraYen)}` : `Already over ${fmt(Math.abs(s.extraYen))}`;
-    return `<label class="obm-adjust-row ${idx === 0 ? 'highlight' : ''}" data-cat="${escH(s.cat)}" style="cursor:pointer;grid-template-columns:auto 1fr auto">
+    const defaultTransfer = Math.round(s.extraYen);
+    const status = `Extra ${fmt(s.extraYen)}`;
+    return `<label class="obm-adjust-row ${idx === 0 ? 'highlight' : ''}" data-cat="${escH(s.cat)}" data-extra-yen="${Math.round(s.extraYen)}" style="cursor:pointer;grid-template-columns:auto 1fr auto">
       <input type="checkbox" class="obm-transfer-check" value="${escH(s.cat)}" ${idx === 0 ? 'checked' : ''} style="width:18px;height:18px">
       <div class="obm-adjust-name">
         <div class="obm-adjust-cat">${CAT_ICONS[s.cat] || ''} ${escH(s.cat)}</div>
         <div class="obm-adjust-meta">Budget ${fmt(s.budgetYen)} · Spent ${fmt(s.spentYen)} · ${status}</div>
       </div>
-      <input type="number" class="obm-adjust-input obm-transfer-amount" data-cat="${escH(s.cat)}" value="${defaultTransfer}" min="0" step="1" aria-label="Transfer amount from ${escH(s.cat)}">
+      <input type="number" class="obm-adjust-input obm-transfer-amount" data-cat="${escH(s.cat)}" value="${defaultTransfer}" min="0" max="${Math.round(s.extraYen)}" step="1" aria-label="Transfer amount from ${escH(s.cat)}">
     </label>`;
   }).join('');
 
@@ -4449,7 +4458,12 @@ function showTransferExtraStep() {
       const check = row.querySelector('.obm-transfer-check');
       const amountInput = row.querySelector('.obm-transfer-amount');
       const sourceCat = check?.value || amountInput?.dataset.cat || '';
-      const requestedYen = Math.max(0, Number(amountInput?.value || 0));
+      const extraLimit = Math.max(0, Number(row.dataset.extraYen || 0));
+      let requestedYen = Math.max(0, Number(amountInput?.value || 0));
+      if (requestedYen > extraLimit) {
+        requestedYen = extraLimit;
+        if (amountInput) amountInput.value = Math.round(extraLimit);
+      }
       row.classList.toggle('highlight', !!check?.checked);
       if (check?.checked && requestedYen > 0) {
         transfers.push({ cat: sourceCat, amountYen: requestedYen });
@@ -4475,7 +4489,16 @@ function showTransferExtraStep() {
   };
 
   list.querySelectorAll('.obm-transfer-check').forEach(check => {
-    check.addEventListener('change', updateTransferSummary);
+    check.addEventListener('change', () => {
+      const row = check.closest('.obm-adjust-row');
+      const amountInput = row?.querySelector('.obm-transfer-amount');
+      // When the user ticks a category, automatically fill its full extra amount.
+      // This fixes the confusing "checked but 0" case.
+      if (check.checked && amountInput && Number(amountInput.value || 0) === 0) {
+        amountInput.value = Math.round(Number(row.dataset.extraYen || 0));
+      }
+      updateTransferSummary();
+    });
   });
   list.querySelectorAll('.obm-transfer-amount').forEach(inp => {
     inp.addEventListener('input', updateTransferSummary);
@@ -4503,7 +4526,8 @@ function applyTransferExtraAndContinue() {
     const check = row.querySelector('.obm-transfer-check');
     const amountInput = row.querySelector('.obm-transfer-amount');
     const sourceCat = check?.value || amountInput?.dataset.cat || '';
-    const requestedYen = Math.max(0, Number(amountInput?.value || 0));
+    const extraLimit = Math.max(0, Number(row.dataset.extraYen || 0));
+    const requestedYen = Math.min(extraLimit, Math.max(0, Number(amountInput?.value || 0)));
     if (check?.checked && sourceCat && requestedYen > 0) {
       transfers.push({ cat: sourceCat, amountYen: requestedYen });
     }
