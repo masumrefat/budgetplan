@@ -3049,6 +3049,10 @@ tr:hover td {
         <option value="expense">Expense</option>
         <option value="income">Income</option>
       </select>
+      <input id="filterDateFrom" type="date" class="tx-filter-select" title="From date" aria-label="From date">
+      <input id="filterDateTo" type="date" class="tx-filter-select" title="To date" aria-label="To date">
+      <button type="button" class="btn btn-ghost btn-sm" id="selectFilteredBtn" title="Select all transactions currently shown">☑ Select shown</button>
+      <button type="button" class="btn btn-ghost btn-sm" id="clearSelectionBtn" hidden title="Clear selected transactions">☐ Clear selection</button>
       <button type="button" class="btn btn-ghost btn-sm tx-filter-clear" onclick="clearFilters()" hidden id="filterClearBtn">✕ Clear filters</button>
     </div>
 
@@ -3056,6 +3060,7 @@ tr:hover td {
     <div class="tx-cat-chips" id="filterCatChips"></div>
 
     <div id="filterTotals"></div>
+    <div id="selectedTotals"></div>
     <div class="tx-grouped" id="txGroupedList"><div class="empty-state">Sign in to load data</div></div>
   </div>
 </div>
@@ -6158,6 +6163,11 @@ function clearFilters() {
   selectedCats.clear();
   document.getElementById('filterType').value='';
   document.getElementById('filterSearch').value='';
+  const fromEl = document.getElementById('filterDateFrom');
+  const toEl = document.getElementById('filterDateTo');
+  if (fromEl) fromEl.value = '';
+  if (toEl) toEl.value = '';
+  clearTransactionSelection(false);
   renderTransactionTable();
 }
 // One delegated listener handles every chip, even after re-render.
@@ -6167,6 +6177,10 @@ document.getElementById('filterCatChips').addEventListener('click', e => {
 });
 document.getElementById('filterType').addEventListener('change',renderTransactionTable);
 document.getElementById('filterSearch').addEventListener('input',renderTransactionTable);
+document.getElementById('filterDateFrom')?.addEventListener('change',renderTransactionTable);
+document.getElementById('filterDateTo')?.addEventListener('change',renderTransactionTable);
+document.getElementById('selectFilteredBtn')?.addEventListener('click', () => selectVisibleTransactions(true));
+document.getElementById('clearSelectionBtn')?.addEventListener('click', () => clearTransactionSelection());
 
 // ════════════════════════════════════════════════
 // RENDER FUNCTIONS
@@ -6560,6 +6574,61 @@ function renderRecentTable() {
   </tr>`).join('');
 }
 
+function getCheckedTransactionSummary() {
+  const checked = [...document.querySelectorAll('.entry-cb:checked')];
+  return checked.reduce((acc, cb) => {
+    const yen = Number(cb.dataset.yen || 0);
+    const type = cb.dataset.type || 'expense';
+    acc.count += 1;
+    if (type === 'income') acc.income += yen;
+    else acc.expense += yen;
+    return acc;
+  }, { count: 0, income: 0, expense: 0 });
+}
+
+function renderSelectedTotals() {
+  const el = document.getElementById('selectedTotals');
+  if (!el) return;
+  const summary = getCheckedTransactionSummary();
+  const clearBtn = document.getElementById('clearSelectionBtn');
+  if (!summary.count) {
+    el.className = '';
+    el.innerHTML = '';
+    if (clearBtn) clearBtn.setAttribute('hidden', '');
+    return;
+  }
+  if (clearBtn) clearBtn.removeAttribute('hidden');
+  const net = summary.income - summary.expense;
+  el.className = 'tx-totals-bar';
+  el.innerHTML = `
+    <div class="tx-totals-filters">✅ Selected transactions</div>
+    <span class="tx-totals-pill"><span class="lbl">Selected</span> ${summary.count}</span>
+    ${summary.expense ? `<span class="tx-totals-pill"><span class="lbl">Expense sum</span> <span class="amount-neg">${fmt(summary.expense)}</span></span>` : ''}
+    ${summary.income ? `<span class="tx-totals-pill"><span class="lbl">Income sum</span> <span class="amount-pos">+${fmt(summary.income)}</span></span>` : ''}
+    ${(summary.income || summary.expense) ? `<span class="tx-totals-pill"><span class="lbl">Net sum</span> <span class="${net >= 0 ? 'amount-pos' : 'amount-neg'}">${net >= 0 ? '+' : ''}${fmt(net)}</span></span>` : ''}
+  `;
+}
+
+function clearTransactionSelection(updateUi=true) {
+  document.querySelectorAll('.entry-cb:checked').forEach(cb => {
+    cb.checked = false;
+    cb.closest('.tx-row')?.classList.remove('is-selected');
+  });
+  if (updateUi) {
+    updateDeleteButtonVisibility();
+    renderSelectedTotals();
+  }
+}
+
+function selectVisibleTransactions(select=true) {
+  document.querySelectorAll('#txGroupedList .entry-cb').forEach(cb => {
+    cb.checked = !!select;
+    cb.closest('.tx-row')?.classList.toggle('is-selected', !!select);
+  });
+  updateDeleteButtonVisibility();
+  renderSelectedTotals();
+}
+
 function renderTransactionTable() {
   const list = document.getElementById('txGroupedList');
   const totalsEl = document.getElementById('filterTotals');
@@ -6575,10 +6644,12 @@ function renderTransactionTable() {
   renderCategoryChips();
   const filterType = document.getElementById('filterType').value;
   const search = document.getElementById('filterSearch').value.toLowerCase();
+  const dateFrom = document.getElementById('filterDateFrom')?.value || '';
+  const dateTo = document.getElementById('filterDateTo')?.value || '';
   // Show/hide the Clear filters button based on whether any filter is active
   const clearBtn = document.getElementById('filterClearBtn');
   if (clearBtn) {
-    if (selectedCats.size || filterType || search) clearBtn.removeAttribute('hidden');
+    if (selectedCats.size || filterType || search || dateFrom || dateTo) clearBtn.removeAttribute('hidden');
     else clearBtn.setAttribute('hidden', '');
   }
   const m = curMonth();
@@ -6605,11 +6676,13 @@ function renderTransactionTable() {
 
   if (selectedCats.size) txs = txs.filter(t => selectedCats.has(t.category));
   if (filterType) txs = txs.filter(t => t.type === filterType);
+  if (dateFrom)   txs = txs.filter(t => (t.date || '') >= dateFrom);
+  if (dateTo)     txs = txs.filter(t => (t.date || '') <= dateTo);
   if (search)     txs = txs.filter(t => (t.note || '').toLowerCase().includes(search) || (t.category || '').toLowerCase().includes(search));
 
   // ── Filter totals bar ──
   if (totalsEl) {
-    if (selectedCats.size || filterType || search) {
+    if (selectedCats.size || filterType || search || dateFrom || dateTo) {
       const incomeTotal  = txs.filter(t => t.type === 'income') .reduce((s, t) => s + (t.amountYen || toYen(t.amount, t.currency || 'JPY')), 0);
       const expenseTotal = txs.filter(t => t.type === 'expense').reduce((s, t) => s + (t.amountYen || toYen(t.amount, t.currency || 'JPY')), 0);
       const net = incomeTotal - expenseTotal;
@@ -6621,6 +6694,9 @@ function renderTransactionTable() {
           : `${names.length} categories`);
       }
       if (filterType) labelParts.push(filterType === 'income' ? '💚 Income' : '❤️ Expense');
+      if (dateFrom && dateTo) labelParts.push(`📅 ${escH(dateFrom)} → ${escH(dateTo)}`);
+      else if (dateFrom) labelParts.push(`📅 From ${escH(dateFrom)}`);
+      else if (dateTo) labelParts.push(`📅 Until ${escH(dateTo)}`);
       if (search)     labelParts.push(`"${escH(search)}"`);
       totalsEl.className = 'tx-totals-bar';
       totalsEl.innerHTML = `
@@ -6690,7 +6766,7 @@ function renderTransactionTable() {
       return `<div class="tx-row ${isFixed ? 'is-fixed' : ''}" data-tx-id="${t.id}">
         <div class="tx-row-check">${isFixed
           ? '<span class="tx-fixed-icon" title="Fixed monthly expense">🔒</span>'
-          : `<input type="checkbox" class="entry-cb" data-id="${t.id}" onclick="event.stopPropagation()">`}</div>
+          : `<input type="checkbox" class="entry-cb" data-id="${t.id}" data-type="${t.type}" data-yen="${yen}" onclick="event.stopPropagation()">`}</div>
         <div class="tx-row-icon" style="background:${catColor}">${icon}</div>
         <div class="tx-row-body">
           <div class="tx-row-note">
@@ -6745,17 +6821,20 @@ function renderTransactionTable() {
         cb.checked = !cb.checked;
         row.classList.toggle('is-selected', cb.checked);
         updateDeleteButtonVisibility();
+        renderSelectedTotals();
       }
     });
     const cb = row.querySelector('.entry-cb');
     if (cb) cb.addEventListener('change', () => {
       row.classList.toggle('is-selected', cb.checked);
       updateDeleteButtonVisibility();
+      renderSelectedTotals();
     });
   });
 
-  // Sync delete-button visibility after re-render (selections may have been cleared)
+  // Sync selection/delete UI after re-render (selections may have been cleared)
   updateDeleteButtonVisibility();
+  renderSelectedTotals();
 }
 
 function updateDeleteButtonVisibility() {
