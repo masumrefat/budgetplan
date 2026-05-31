@@ -2158,6 +2158,21 @@ input[type="checkbox"]:focus-visible {
 }
 html[data-theme="dark"] .tx-fixed-badge { color: var(--text); }
 
+.tx-audit-badge {
+  display: inline-block;
+  margin-left: 8px;
+  background: var(--warning-soft);
+  color: var(--warning);
+  border: 1px solid rgba(201, 122, 28, 0.18);
+  font-family: 'Plus Jakarta Sans', system-ui, sans-serif;
+  font-size: 0.6rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  padding: 2px 7px;
+  border-radius: 999px;
+  vertical-align: middle;
+}
+
 .tx-row-check { display: flex; align-items: center; }
 .tx-row-icon {
   width: 32px;
@@ -3114,6 +3129,12 @@ tr:hover td {
           <label>Note / Description</label>
           <input id="txNote" placeholder="e.g. Kohyo supermarket, salary, Rent...">
         </div>
+        <div class="form-group full" id="txAuditOnlyWrap" style="background:var(--warning-soft);border:1px solid rgba(201,122,28,0.18);border-radius:12px;padding:12px 14px">
+          <label style="display:flex;align-items:flex-start;gap:10px;text-transform:none;letter-spacing:0;font-size:0.86rem;color:var(--text);font-family:'Manrope',system-ui,sans-serif;font-weight:700;margin:0">
+            <input id="txAuditOnly" type="checkbox" style="margin-top:2px">
+            <span>Yearly audit only / big purchase<br><small style="font-weight:500;color:var(--text-muted)">Use for expensive one-time items. It will show in Transactions and Yearly Summary, but will not count in monthly spending, monthly budget, dashboard, or monthly charts.</small></span>
+          </label>
+        </div>
       </div>
       <!-- Hidden — set by setEntryMode() for backward compatibility -->
       <span id="entryModeBadge" hidden></span>
@@ -3227,10 +3248,19 @@ tr:hover td {
   <div class="card">
     <div class="section-head">
       <div class="card-title">📉 Family Financial Health Trend</div>
-      <div style="font-size:0.8rem;color:var(--text-soft)">Selected year overview</div>
+      <div style="font-size:0.8rem;color:var(--text-soft)">Monthly-only view — big yearly audit purchases are excluded</div>
     </div>
     <div id="familyHealthStatus" style="margin-bottom:14px"></div>
     <div class="family-health-canvas-wrap"><canvas id="familyHealthChart"></canvas></div>
+  </div>
+
+  <div class="card">
+    <div class="section-head">
+      <div class="card-title">🏦 Yearly Budget vs Big Expenses</div>
+      <div style="font-size:0.8rem;color:var(--text-soft)">Shows whether the full year stayed inside budget after big purchases</div>
+    </div>
+    <div id="yearBudgetAuditStatus" style="margin-bottom:14px"></div>
+    <div class="family-health-canvas-wrap"><canvas id="yearBudgetAuditChart"></canvas></div>
   </div>
 
   <div class="card">
@@ -4201,11 +4231,20 @@ function populateSelects() {
   document.getElementById('fixedCat').innerHTML=EXPENSE_CATS.map(c=>`<option value="${escH(c)}">${escH(c)}</option>`).join('');
   document.getElementById('incCat').innerHTML=INCOME_CATS.map(c=>`<option value="${escH(c)}">${escH(c)}</option>`).join('');
   document.getElementById('entryModeBadge').textContent=type==='income'?'Income':'Expense';
+  updateAuditOnlyVisibility();
   // Category swatches
   const sw=document.getElementById('categorySwatches');
   if(sw) sw.innerHTML=EXPENSE_CATS.map(c=>`<div style="display:flex;align-items:center;gap:6px;padding:5px 12px;border-radius:10px;background:${CAT_COLORS[c]||'#eee'};font-size:0.8rem">${CAT_ICONS[c]||''} ${c}</div>`).join('');
 }
 document.getElementById('txType').addEventListener('change',populateSelects);
+function updateAuditOnlyVisibility() {
+  const type = document.getElementById('txType')?.value || 'expense';
+  const wrap = document.getElementById('txAuditOnlyWrap');
+  const field = document.getElementById('txAuditOnly');
+  if (!wrap || !field) return;
+  wrap.style.display = type === 'expense' ? 'block' : 'none';
+  if (type !== 'expense') field.checked = false;
+}
 
 // If the user changes any of the fields that drive the budget check after
 // they've confirmed an over-budget save, drop the override so they see the
@@ -4300,8 +4339,8 @@ function showAdjustBudgetsStep() {
   // Build per-category rows. Highlight the category that triggered the warning.
   const list = document.getElementById('obmAdjustList');
   const byCat = {};
-  (m.transactions || []).filter(t => t.type === 'expense').forEach(t => {
-    byCat[t.category] = (byCat[t.category] || 0) + (t.amountYen || toYen(t.amount, t.currency || 'JPY'));
+  (m.transactions || []).filter(t => t.type === 'expense' && countsInMonthly(t)).forEach(t => {
+    byCat[t.category] = (byCat[t.category] || 0) + txAmountYen(t);
   });
   (m.fixedExpenses || []).forEach(fe => {
     byCat[fe.category] = (byCat[fe.category] || 0) + toYen(fe.amount, fe.currency || 'JPY');
@@ -4733,9 +4772,9 @@ function showKeyboardShortcutsHelp() {
 function getCategorySpentYen(monthObj, category, excludeId=null) {
   let spent = 0;
   (monthObj.transactions || []).forEach(t => {
-    if (t.type !== 'expense' || t.category !== category) return;
+    if (t.type !== 'expense' || t.category !== category || isYearlyAuditOnly(t)) return;
     if (excludeId && t.id === excludeId) return;
-    spent += (t.amountYen || toYen(t.amount, t.currency || 'JPY'));
+    spent += txAmountYen(t);
   });
   (monthObj.fixedExpenses || []).forEach(fe => {
     if (fe.category !== category) return;
@@ -4751,6 +4790,17 @@ function getCategoryBudgetYen(monthObj, category) {
   return toYen(amt, cur);
 }
 
+
+function isYearlyAuditOnly(t) {
+  return !!(t && (t.auditOnly === true || t.scope === 'yearly_audit'));
+}
+function countsInMonthly(t) {
+  return !isYearlyAuditOnly(t);
+}
+function txAmountYen(t) {
+  return Number(t?.amountYen || toYen(t?.amount || 0, t?.currency || 'JPY') || 0);
+}
+
 // ════════════════════════════════════════════════
 // ADD / EDIT TRANSACTION
 // ════════════════════════════════════════════════
@@ -4761,6 +4811,7 @@ document.getElementById('entryForm').addEventListener('submit', async e=>{
   const date=document.getElementById('txDate').value;
   const cat=document.getElementById('txCategory').value;
   const type=document.getElementById('txType').value;
+  const auditOnly = type === 'expense' && !!document.getElementById('txAuditOnly')?.checked;
   if(!date||!cat||amount<=0) { document.getElementById('entryMessage').textContent='⚠ Fill date, category and amount.'; return; }
 
   // Route the transaction to the month/year of the picked date, not the currently viewed month.
@@ -4775,7 +4826,7 @@ document.getElementById('entryForm').addEventListener('submit', async e=>{
   // ── BUDGET AVAILABILITY CHECK (expenses only) ──
   // Shows a modal warning if this would push the category over budget.
   // The user can: cancel, adjust budgets, or save anyway.
-  if (type === 'expense' && !budgetOverrideConfirmed) {
+  if (type === 'expense' && !auditOnly && !budgetOverrideConfirmed) {
     const budgetYen = getCategoryBudgetYen(targetMonth, cat);
     if (budgetYen > 0) {
       const newAmtYen = toYen(amount, currency);
@@ -4804,7 +4855,7 @@ document.getElementById('entryForm').addEventListener('submit', async e=>{
   // The "Save Anyway" path: still over budget.
   // The "Adjust Budgets" path: user may have raised the budget enough to fit — recompute.
   let wasOverBudgetSave = false;
-  if (budgetOverrideConfirmed && type === 'expense') {
+  if (budgetOverrideConfirmed && type === 'expense' && !auditOnly) {
     const newBudgetYen = getCategoryBudgetYen(targetMonth, cat);
     const newAmtYen = toYen(amount, currency);
     const alreadySpent = getCategorySpentYen(targetMonth, cat, editingTxId);
@@ -4829,6 +4880,8 @@ document.getElementById('entryForm').addEventListener('submit', async e=>{
             author:document.getElementById('txAuthor').value,
             amount, currency, amountYen:toYen(amount,currency),
             note:document.getElementById('txNote').value.trim(),
+            auditOnly,
+            scope: auditOnly ? 'yearly_audit' : 'monthly',
             updatedAt: new Date().toISOString(),
           };
           targetMonth.transactions.push(updated);
@@ -4839,6 +4892,8 @@ document.getElementById('entryForm').addEventListener('submit', async e=>{
             author:document.getElementById('txAuthor').value,
             amount, currency, amountYen:toYen(amount,currency),
             note:document.getElementById('txNote').value.trim(),
+            auditOnly,
+            scope: auditOnly ? 'yearly_audit' : 'monthly',
             updatedAt: new Date().toISOString(),
           };
         }
@@ -4872,6 +4927,8 @@ document.getElementById('entryForm').addEventListener('submit', async e=>{
     date, category:cat, author:document.getElementById('txAuthor').value,
     amount, currency, amountYen:toYen(amount,currency),
     note:document.getElementById('txNote').value.trim(),
+    auditOnly,
+    scope: auditOnly ? 'yearly_audit' : 'monthly',
     createdAt:new Date().toISOString(),
   };
   targetMonth.transactions.push(tx);
@@ -4931,6 +4988,9 @@ function editTransaction(txId) {
   document.getElementById('txAmount').value = found.amount;
   document.getElementById('txCurrency').value = found.currency || 'JPY';
   document.getElementById('txNote').value = found.note || '';
+  const auditField = document.getElementById('txAuditOnly');
+  if (auditField) auditField.checked = isYearlyAuditOnly(found);
+  updateAuditOnlyVisibility();
   if (typeof updateCurrencyUI === 'function') updateCurrencyUI();
 
   // Visually mark form as in edit mode
@@ -4959,6 +5019,8 @@ function cancelEditTx() {
 function clearTxForm() {
   document.getElementById('txAmount').value='';
   document.getElementById('txNote').value='';
+  const auditField = document.getElementById('txAuditOnly');
+  if (auditField) auditField.checked = false;
   document.getElementById('txDate').value=today();
   budgetOverrideConfirmed = false;
   document.getElementById('entryMessage').textContent='';
@@ -5086,10 +5148,10 @@ function getRollingMonths(limit=12) {
 }
 
 function getMonthBreakdown(month) {
-  const allTx=[...(month.transactions||[])];
+  const allTx=[...(month.transactions||[]).filter(countsInMonthly)];
   (month.fixedExpenses||[]).forEach(fe=>allTx.push({type:'expense',category:fe.category,amountYen:toYen(fe.amount,fe.currency||'JPY')}));
   const expenses=allTx.filter(t=>t.type==='expense');
-  const incomes=(month.transactions||[]).filter(t=>t.type==='income');
+  const incomes=(month.transactions||[]).filter(t=>t.type==='income' && countsInMonthly(t));
   const actualIncome=incomes.reduce((s,t)=>s+(t.amountYen||toYen(t.amount,t.currency||'JPY')),0);
   const plannedIncome=(month.plannedIncome||[]).reduce((s,p)=>s+toYen(p.amount,p.currency||'JPY'),0);
   const expense=expenses.reduce((s,t)=>s+(t.amountYen||toYen(t.amount,t.currency||'JPY')),0);
@@ -5157,7 +5219,7 @@ function analyzeBudgetAngel() {
   const daysRemaining = Math.max(0, daysInMonth - dayOfMonth);
 
   // ── Transaction-level intelligence ──
-  const transactions = (m.transactions || []).filter(t => t.type === 'expense');
+  const transactions = (m.transactions || []).filter(t => t.type === 'expense' && countsInMonthly(t));
   const txByDate = {};
   transactions.forEach(t => {
     const d = t.date;
@@ -6056,27 +6118,28 @@ function renderExportMonthSelect() {
 function buildMonthWorkbook(monthIdx, year=currentYear) {
   const month=ensureYearExists(year).months[monthIdx];
   const wb=XLSX.utils.book_new();
-  const allTx=[...month.transactions];
+  const allTx=[...(month.transactions || []).filter(countsInMonthly)];
   month.fixedExpenses.forEach(fe=>allTx.push({type:'expense',category:fe.category,amountYen:toYen(fe.amount,fe.currency||'JPY')}));
   const expenses=allTx.filter(t=>t.type==='expense');
-  const incomes=month.transactions.filter(t=>t.type==='income');
-  const totalExp=expenses.reduce((s,t)=>s+(t.amountYen||toYen(t.amount,t.currency||'JPY')),0);
-  const totalInc=incomes.reduce((s,t)=>s+(t.amountYen||toYen(t.amount,t.currency||'JPY')),0);
+  const incomes=(month.transactions || []).filter(t=>t.type==='income' && countsInMonthly(t));
+  const auditOnlyTotal=(month.transactions || []).filter(t=>t.type==='expense' && isYearlyAuditOnly(t)).reduce((s,t)=>s+txAmountYen(t),0);
+  const totalExp=expenses.reduce((s,t)=>s+txAmountYen(t),0);
+  const totalInc=incomes.reduce((s,t)=>s+txAmountYen(t),0);
   const fixed=month.fixedExpenses.reduce((s,f)=>s+toYen(f.amount,f.currency||'JPY'),0);
   const planned=month.plannedIncome.reduce((s,p)=>s+toYen(p.amount,p.currency||'JPY'),0);
 
   XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet([
     {Month: month.name, Year: year},
-    {'Total Income (¥)': Math.round(totalInc), 'Total Expense (¥)': Math.round(totalExp), 'Balance (¥)': Math.round(totalInc-totalExp), 'Fixed Expense (¥)': Math.round(fixed), 'Planned Income (¥)': Math.round(planned), 'Transactions': month.transactions.length, 'EUR to JPY Rate': state.eurRate}
+    {'Total Income (¥)': Math.round(totalInc), 'Monthly Expense (¥)': Math.round(totalExp), 'Monthly Balance (¥)': Math.round(totalInc-totalExp), 'Yearly Audit Only (¥)': Math.round(auditOnlyTotal), 'Fixed Expense (¥)': Math.round(fixed), 'Planned Income (¥)': Math.round(planned), 'Transactions': month.transactions.length, 'EUR to JPY Rate': state.eurRate}
   ]), 'Summary');
 
   const txRows=month.transactions.map(t=>({
-    Date:t.date||'', Type:t.type||'', Category:t.category||'', Author:t.author||'', Amount:t.amount||0, Currency:t.currency||'JPY', 'Amount (JPY)': Math.round(t.amountYen||toYen(t.amount,t.currency||'JPY')), Note:t.note||'', CreatedAt:t.createdAt||''
+    Date:t.date||'', Type:t.type||'', Scope:isYearlyAuditOnly(t)?'Yearly audit only':'Monthly', Category:t.category||'', Author:t.author||'', Amount:t.amount||0, Currency:t.currency||'JPY', 'Amount (JPY)': Math.round(txAmountYen(t)), 'Counts in Monthly?': countsInMonthly(t) ? 'Yes' : 'No', Note:t.note||'', CreatedAt:t.createdAt||''
   }));
   XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(txRows.length?txRows:[{Info:'No transactions'}]), 'Transactions');
 
   const budgetRows=EXPENSE_CATS.map(cat=>{
-    const txSpent = month.transactions.filter(x=>x.type==='expense'&&x.category===cat).reduce((s,x)=>s+(x.amountYen||toYen(x.amount,x.currency||'JPY')),0);
+    const txSpent = month.transactions.filter(x=>x.type==='expense'&&x.category===cat&&countsInMonthly(x)).reduce((s,x)=>s+txAmountYen(x),0);
     const fixedSpent = (month.fixedExpenses||[]).filter(x=>x.category===cat).reduce((s,x)=>s+toYen(x.amount,x.currency||'JPY'),0);
     const spent = txSpent + fixedSpent;
     const rawBudget = Number(month.budgets?.[cat] || 0);
@@ -6187,10 +6250,10 @@ document.getElementById('clearSelectionBtn')?.addEventListener('click', () => cl
 // ════════════════════════════════════════════════
 function getMonthStats() {
   const m=curMonth();
-  const allTx=[...m.transactions];
+  const allTx=[...(m.transactions || []).filter(countsInMonthly)];
   m.fixedExpenses.forEach(fe=>allTx.push({type:'expense',category:fe.category,amountYen:toYen(fe.amount,fe.currency||'JPY')}));
   const expenses=allTx.filter(t=>t.type==='expense');
-  const incomes=m.transactions.filter(t=>t.type==='income');
+  const incomes=(m.transactions||[]).filter(t=>t.type==='income' && countsInMonthly(t));
   const actualIncome=incomes.reduce((s,t)=>s+(t.amountYen||toYen(t.amount,t.currency||'JPY')),0);
   const planned=m.plannedIncome.reduce((s,p)=>s+toYen(p.amount,p.currency||'JPY'),0);
   const totalInc=actualIncome + planned;
@@ -6215,7 +6278,7 @@ function renderDailyExpenseChart() {
   const daysInMonth = new Date(currentYear, currentMonthIdx + 1, 0).getDate();
   const totals = Array(daysInMonth).fill(0);
   (m.transactions || []).forEach(t => {
-    if(t.type !== 'expense' || !t.date) return;
+    if(t.type !== 'expense' || isYearlyAuditOnly(t) || !t.date) return;
     const d = new Date(t.date);
     if(Number.isNaN(d.getTime())) return;
     const day = d.getDate();
@@ -6763,6 +6826,7 @@ function renderTransactionTable() {
       const catColor = CAT_COLORS[t.category] || '#eee';
       const icon = CAT_ICONS[t.category] || '💰';
       const isFixed = !!t._fixed;
+      const isAuditOnly = isYearlyAuditOnly(t);
       return `<div class="tx-row ${isFixed ? 'is-fixed' : ''}" data-tx-id="${t.id}">
         <div class="tx-row-check">${isFixed
           ? '<span class="tx-fixed-icon" title="Fixed monthly expense">🔒</span>'
@@ -6772,12 +6836,14 @@ function renderTransactionTable() {
           <div class="tx-row-note">
             ${escH(t.note || t.category || '—')}
             ${isFixed ? '<span class="tx-fixed-badge">FIXED</span>' : ''}
+            ${isAuditOnly ? '<span class="tx-audit-badge">YEARLY AUDIT</span>' : ''}
           </div>
           <div class="tx-row-meta">
             <span class="tx-row-cat-pill" style="background:${catColor}">${escH(t.category)}</span>
             ${isFixed
               ? '<span class="dot"></span><span>Monthly recurring</span>'
               : (t.author ? `<span class="dot"></span><span>${escH(t.author)}</span>` : '')}
+            ${isAuditOnly ? '<span class="dot"></span><span>Excluded from monthly totals</span>' : ''}
           </div>
         </div>
         <div class="tx-row-amount ${amtClass}">
@@ -6907,8 +6973,8 @@ function renderBudgetCards() {
   // Make sure budgetCurrencies object exists on the month
   if(!m.budgetCurrencies) m.budgetCurrencies = {};
   const byCat={};
-  m.transactions.filter(x=>x.type==='expense').forEach(x=>{
-    byCat[x.category]=(byCat[x.category]||0)+(x.amountYen||toYen(x.amount,x.currency||'JPY'));
+  m.transactions.filter(x=>x.type==='expense' && countsInMonthly(x)).forEach(x=>{
+    byCat[x.category]=(byCat[x.category]||0)+txAmountYen(x);
   });
   (m.fixedExpenses||[]).forEach(fe=>{
     byCat[fe.category]=(byCat[fe.category]||0)+toYen(fe.amount,fe.currency||'JPY');
@@ -7028,6 +7094,7 @@ function deletePlannedIncome(id) {
 }
 
 let familyHealthChartInstance = null;
+let yearlyBudgetAuditChartInstance = null;
 
 function getYearSummaryData(year=currentYear) {
   const yd = ensureYearExists(year);
@@ -7036,9 +7103,11 @@ function getYearSummaryData(year=currentYear) {
     const txIncome = (m.transactions||[]).filter(x=>x.type==='income').reduce((s,x)=>s+(x.amountYen||toYen(x.amount,x.currency||'JPY')),0);
     const planIncome = (m.plannedIncome||[]).reduce((s,x)=>s+toYen(x.amount,x.currency||'JPY'),0);
     const income = txIncome + planIncome;
-    const txExpense = (m.transactions||[]).filter(x=>x.type==='expense').reduce((s,x)=>s+(x.amountYen||toYen(x.amount,x.currency||'JPY')),0);
+    const txExpense = (m.transactions||[]).filter(x=>x.type==='expense' && countsInMonthly(x)).reduce((s,x)=>s+txAmountYen(x),0);
+    const auditExpense = (m.transactions||[]).filter(x=>x.type==='expense' && isYearlyAuditOnly(x)).reduce((s,x)=>s+txAmountYen(x),0);
     const fixed = (m.fixedExpenses||[]).reduce((s,x)=>s+toYen(x.amount,x.currency||'JPY'),0);
-    const expense = txExpense + fixed;
+    const monthlyExpense = txExpense + fixed; // normal monthly spending only
+    const expense = monthlyExpense + auditExpense; // full yearly audit spending
     const budget = EXPENSE_CATS.reduce((sum, cat) => {
       const rawBudget = Number((m.budgets||{})[cat] || 0);
       const budgetCur = (m.budgetCurrencies && m.budgetCurrencies[cat]) || 'JPY';
@@ -7046,21 +7115,25 @@ function getYearSummaryData(year=currentYear) {
     }, 0);
     const txCount = (m.transactions||[]).length;
     const balance = income - expense;
-    return { month: MONTHS[idx], income, expense, balance, budget, txCount, fixed };
+    const monthlyBalance = income - monthlyExpense;
+    return { month: MONTHS[idx], income, expense, monthlyExpense, balance, monthlyBalance, budget, txCount, fixed, auditExpense };
   });
   const totals = monthRows.reduce((acc, row) => {
     acc.income += row.income;
     acc.expense += row.expense;
+    acc.monthlyExpense += row.monthlyExpense || 0;
     acc.balance += row.balance;
+    acc.monthlyBalance += row.monthlyBalance || 0;
     acc.budget += row.budget;
     acc.txCount += row.txCount;
     acc.fixed += row.fixed;
+    acc.auditExpense += row.auditExpense || 0;
     return acc;
-  }, {income:0, expense:0, balance:0, budget:0, txCount:0, fixed:0});
+  }, {income:0, expense:0, monthlyExpense:0, balance:0, monthlyBalance:0, budget:0, txCount:0, fixed:0, auditExpense:0});
   const expByCat = {};
   months.forEach(m => {
     (m.transactions||[]).filter(x=>x.type==='expense').forEach(x=>{
-      const y = x.amountYen||toYen(x.amount,x.currency||'JPY');
+      const y = txAmountYen(x);
       expByCat[x.category] = (expByCat[x.category]||0)+y;
     });
     (m.fixedExpenses||[]).forEach(x=>{
@@ -7085,9 +7158,11 @@ function renderYearSummary() {
     <div class="summary-grid" style="margin-bottom:16px">
       <div class="summary-card income"><div class="s-label">Year Income</div><div class="s-value pos">${fmt(t.income)}</div></div>
       <div class="summary-card expense"><div class="s-label">Year Expense</div><div class="s-value neg">${fmt(t.expense)}</div></div>
+      <div class="summary-card balance"><div class="s-label">Monthly Health Balance</div><div class="s-value ${(t.monthlyBalance || 0)>=0?'pos':'neg'}">${fmt(t.monthlyBalance || 0)}</div></div>
       <div class="summary-card balance"><div class="s-label">Year Balance</div><div class="s-value ${t.balance>=0?'pos':'neg'}">${fmt(t.balance)}</div></div>
       <div class="summary-card"><div class="s-label">Budget Planned</div><div class="s-value neu">${fmt(t.budget)}</div></div>
       <div class="summary-card fixed"><div class="s-label">Fixed Expenses</div><div class="s-value neu">${fmt(t.fixed)}</div></div>
+      <div class="summary-card" style="border-left-color:var(--warning)"><div class="s-label">Yearly Audit Only</div><div class="s-value neu">${fmt(t.auditExpense || 0)}</div></div>
       <div class="summary-card"><div class="s-label">Transactions</div><div class="s-value neu">${t.txCount}</div></div>
     </div>`;
   const topCats = data.topCats.length ? `
@@ -7096,12 +7171,12 @@ function renderYearSummary() {
       <div style="display:flex;flex-wrap:wrap;gap:8px">${data.topCats.map(([cat,val])=>`<div style="padding:7px 12px;border-radius:999px;background:${CAT_COLORS[cat]||'#eee'};font-size:0.8rem">${CAT_ICONS[cat]||''} ${escH(cat)} • <strong>${fmt(val)}</strong></div>`).join('')}</div>
     </div>` : '<div class="empty-state" style="padding:14px">No yearly expense data yet</div>';
   const rows = data.monthRows.map(r=>`<tr>
-      <td>${r.month}</td><td>${fmt(r.income)}</td><td>${fmt(r.expense)}</td><td class="${r.balance>=0?'amount-pos':'amount-neg'}">${fmt(r.balance)}</td><td>${fmt(r.budget)}</td><td>${r.txCount}</td>
+      <td>${r.month}</td><td>${fmt(r.income)}</td><td>${fmt(r.monthlyExpense || 0)}</td><td>${fmt(r.auditExpense || 0)}</td><td>${fmt(r.expense)}</td><td class="${r.balance>=0?'amount-pos':'amount-neg'}">${fmt(r.balance)}</td><td>${fmt(r.budget)}</td><td>${r.txCount}</td>
     </tr>`).join('');
   const table = `
     <div class="tbl-wrap">
       <table>
-        <thead><tr><th>Month</th><th>Income</th><th>Expense</th><th>Balance</th><th>Budget</th><th>Transactions</th></tr></thead>
+        <thead><tr><th>Month</th><th>Income</th><th>Monthly Expense</th><th>Audit Only</th><th>Year Expense</th><th>Balance</th><th>Budget</th><th>Transactions</th></tr></thead>
         <tbody>${rows}</tbody>
       </table>
     </div>`;
@@ -7120,22 +7195,22 @@ function renderFamilyHealthGraph() {
   }
 
   const data = getYearSummaryData(currentYear);
-  const activeRows = data.monthRows.filter(r => r.income || r.expense);
+  const activeRows = data.monthRows.filter(r => r.income || r.monthlyExpense);
   const labels = data.monthRows.map(r=>r.month.slice(0,3));
-  const balances = data.monthRows.map(r=>Number(convertFromYen(r.balance).toFixed(2)));
+  const balances = data.monthRows.map(r=>Number(convertFromYen(r.monthlyBalance || 0).toFixed(2)));
   const savingsRates = data.monthRows.map(r=>{
-    const rate = r.income>0 ? (r.balance/r.income)*100 : 0;
+    const rate = r.income>0 ? ((r.monthlyBalance || 0)/r.income)*100 : 0;
     return Number(Math.max(-100, Math.min(100, rate)).toFixed(1));
   });
-  const totalBal = data.totals.balance;
-  const positiveMonths = activeRows.filter(r=>r.balance>=0).length;
+  const totalBal = data.totals.monthlyBalance || 0;
+  const positiveMonths = activeRows.filter(r=>(r.monthlyBalance || 0)>=0).length;
   const recentRows = activeRows.slice(-3);
-  const last3 = recentRows.reduce((s,r)=>s+r.balance,0);
+  const last3 = recentRows.reduce((s,r)=>s+(r.monthlyBalance || 0),0);
   const avgSavingsRate = activeRows.length
-    ? activeRows.reduce((s,r)=>s + (r.income>0 ? (r.balance/r.income) : 0),0) / activeRows.length
+    ? activeRows.reduce((s,r)=>s + (r.income>0 ? ((r.monthlyBalance || 0)/r.income) : 0),0) / activeRows.length
     : 0;
   const budgetHitRate = activeRows.length
-    ? activeRows.filter(r => r.budget<=0 || r.expense<=r.budget).length / activeRows.length
+    ? activeRows.filter(r => r.budget<=0 || (r.monthlyExpense || 0)<=r.budget).length / activeRows.length
     : 0;
   const scoreRaw = activeRows.length
     ? (avgSavingsRate * 45) + (budgetHitRate * 35) + ((positiveMonths / activeRows.length) * 20)
@@ -7154,13 +7229,13 @@ function renderFamilyHealthGraph() {
     <div class="angel-head" style="margin-bottom:8px">
       <div>
         <div style="font-size:0.9rem;font-weight:700;margin-bottom:4px">Family financial health for ${currentYear}</div>
-        <div style="font-size:0.82rem;color:var(--text-soft)">${msg}</div>
+        <div style="font-size:0.82rem;color:var(--text-soft)">${msg} Big yearly-audit purchases are excluded here.</div>
       </div>
       <span class="angel-badge ${cls}">${status}</span>
     </div>
     <div class="angel-grid" style="margin-top:10px">
       <div class="angel-metric"><div class="angel-metric-label">Health score</div><div class="angel-metric-value">${healthScore}/100</div></div>
-      <div class="angel-metric"><div class="angel-metric-label">Year balance</div><div class="angel-metric-value ${totalBal>=0?'amount-pos':'amount-neg'}">${fmt(totalBal)}</div></div>
+      <div class="angel-metric"><div class="angel-metric-label">Monthly health balance</div><div class="angel-metric-value ${totalBal>=0?'amount-pos':'amount-neg'}">${fmt(totalBal)}</div></div>
       <div class="angel-metric"><div class="angel-metric-label">Positive months</div><div class="angel-metric-value">${positiveMonths}/${activeRows.length||12}</div></div>
       <div class="angel-metric"><div class="angel-metric-label">Recent 3 months</div><div class="angel-metric-value ${last3>=0?'amount-pos':'amount-neg'}">${fmt(last3)}</div></div>
     </div>`;
@@ -7231,6 +7306,142 @@ function renderFamilyHealthGraph() {
   });
 }
 
+
+function renderYearlyBudgetAuditGraph() {
+  const statusEl = document.getElementById('yearBudgetAuditStatus');
+  const canvas = document.getElementById('yearBudgetAuditChart');
+  if(!statusEl || !canvas) return;
+  if (yearlyBudgetAuditChartInstance) { yearlyBudgetAuditChartInstance.destroy(); yearlyBudgetAuditChartInstance = null; }
+  const ctx = canvas.getContext('2d');
+  if(!canViewPrivateData()) {
+    statusEl.innerHTML = '<div class="empty-state" style="padding:10px">🔒 Login to view yearly budget audit</div>';
+    ctx.clearRect(0,0,canvas.width,canvas.height);
+    return;
+  }
+
+  const data = getYearSummaryData(currentYear);
+  const t = data.totals;
+  const yearlyBudget = Number(t.budget || 0);
+  const monthlyExpense = Number(t.monthlyExpense || 0);
+  const bigExpense = Number(t.auditExpense || 0);
+  const totalExpense = monthlyExpense + bigExpense;
+  const difference = yearlyBudget - totalExpense;
+  const hasBudget = yearlyBudget > 0;
+  const isInsideBudget = hasBudget && difference >= 0;
+  const overBy = Math.max(0, -difference);
+  const left = Math.max(0, difference);
+  const usedPct = hasBudget ? Math.round((totalExpense / yearlyBudget) * 100) : 0;
+
+  let status = 'No yearly budget set';
+  let cls = 'angel-mid';
+  let msg = `Add monthly budgets to compare the full year against regular spending plus big purchases.`;
+  if (hasBudget && isInsideBudget) {
+    status = 'Inside yearly budget';
+    cls = 'angel-good';
+    msg = `Good: your normal monthly expenses plus yearly-audit big purchases are still inside the yearly budget.`;
+  } else if (hasBudget) {
+    status = 'Out of yearly budget';
+    cls = 'angel-bad';
+    msg = `Warning: after adding yearly-audit big purchases, you are over the yearly budget by ${fmt(overBy)}.`;
+  }
+
+  statusEl.innerHTML = `
+    <div class="angel-head" style="margin-bottom:8px">
+      <div>
+        <div style="font-size:0.9rem;font-weight:700;margin-bottom:4px">Yearly budget audit for ${currentYear}</div>
+        <div style="font-size:0.82rem;color:var(--text-soft)">${msg}</div>
+      </div>
+      <span class="angel-badge ${cls}">${status}</span>
+    </div>
+    <div class="angel-grid" style="margin-top:10px">
+      <div class="angel-metric"><div class="angel-metric-label">Yearly budget</div><div class="angel-metric-value">${fmt(yearlyBudget)}</div></div>
+      <div class="angel-metric"><div class="angel-metric-label">Monthly expenses</div><div class="angel-metric-value amount-neg">${fmt(monthlyExpense)}</div></div>
+      <div class="angel-metric"><div class="angel-metric-label">Big expenses</div><div class="angel-metric-value amount-neg">${fmt(bigExpense)}</div></div>
+      <div class="angel-metric"><div class="angel-metric-label">Budget result</div><div class="angel-metric-value ${difference >= 0 ? 'amount-pos' : 'amount-neg'}">${difference >= 0 ? fmt(left) + ' left' : fmt(overBy) + ' over'}</div></div>
+    </div>`;
+
+  const labels = data.monthRows.map(r=>r.month.slice(0,3));
+  const monthlyExpenseData = data.monthRows.map(r=>Number(convertFromYen(r.monthlyExpense || 0).toFixed(2)));
+  const bigExpenseData = data.monthRows.map(r=>Number(convertFromYen(r.auditExpense || 0).toFixed(2)));
+  const budgetData = data.monthRows.map(r=>Number(convertFromYen(r.budget || 0).toFixed(2)));
+  const totalExpenseData = data.monthRows.map(r=>Number(convertFromYen((r.monthlyExpense || 0) + (r.auditExpense || 0)).toFixed(2)));
+
+  const _csVar = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  const accentLine = _csVar('--accent') || '#2d5a3d';
+  const yTitle = displayCurrency === 'EUR' ? 'Amount (€)' : 'Amount (¥)';
+
+  yearlyBudgetAuditChartInstance = new Chart(ctx, {
+    data: {
+      labels,
+      datasets: [
+        {
+          type: 'bar',
+          label: displayCurrency === 'EUR' ? 'Monthly Expenses (€)' : 'Monthly Expenses (¥)',
+          data: monthlyExpenseData,
+          backgroundColor: 'rgba(52, 152, 219, 0.28)',
+          borderColor: '#3498db',
+          borderWidth: 1,
+          borderRadius: 7,
+          stack: 'expense'
+        },
+        {
+          type: 'bar',
+          label: displayCurrency === 'EUR' ? 'Big Expenses (€)' : 'Big Expenses (¥)',
+          data: bigExpenseData,
+          backgroundColor: 'rgba(201, 122, 28, 0.35)',
+          borderColor: '#c97a1c',
+          borderWidth: 1,
+          borderRadius: 7,
+          stack: 'expense'
+        },
+        {
+          type: 'line',
+          label: displayCurrency === 'EUR' ? 'Monthly Budget (€)' : 'Monthly Budget (¥)',
+          data: budgetData,
+          borderColor: accentLine,
+          backgroundColor: 'transparent',
+          borderWidth: 2,
+          pointRadius: 3,
+          tension: 0.25
+        },
+        {
+          type: 'line',
+          label: 'Total Spending vs Budget',
+          data: totalExpenseData,
+          borderColor: difference >= 0 ? '#27ae60' : '#c0392b',
+          backgroundColor: 'transparent',
+          borderDash: [6, 4],
+          borderWidth: 2,
+          pointRadius: 2,
+          tension: 0.25
+        }
+      ]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { position: 'bottom' },
+        tooltip: {
+          callbacks: {
+            afterBody: (items) => {
+              const i = items?.[0]?.dataIndex || 0;
+              const row = data.monthRows[i];
+              const total = (row.monthlyExpense || 0) + (row.auditExpense || 0);
+              const diff = (row.budget || 0) - total;
+              return diff >= 0 ? `Month result: ${fmt(diff)} left` : `Month result: ${fmt(Math.abs(diff))} over`;
+            }
+          }
+        }
+      },
+      scales: {
+        x: { stacked: true, grid: { display: false } },
+        y: { stacked: false, beginAtZero: true, title: { display: true, text: yTitle } }
+      }
+    }
+  });
+}
+
 function renderChartsPage() {
   renderYearScroller();
   if(!canViewPrivateData()){
@@ -7251,11 +7462,12 @@ function renderChartsPage() {
     </div>`;
     renderYearSummary();
     renderFamilyHealthGraph();
+    renderYearlyBudgetAuditGraph();
     return;
   }
   const m=curMonth();
   const expByCat={};
-  m.transactions.filter(x=>x.type==='expense').forEach(x=>expByCat[x.category]=(expByCat[x.category]||0)+(x.amountYen||toYen(x.amount,x.currency||'JPY')));
+  m.transactions.filter(x=>x.type==='expense' && countsInMonthly(x)).forEach(x=>expByCat[x.category]=(expByCat[x.category]||0)+txAmountYen(x));
   const cats=Object.entries(expByCat).sort((a,b)=>b[1]-a[1]);
   const el2=document.getElementById('catChartWrap2');
   if(!cats.length){ el2.innerHTML='<div class="empty-state">No expense data</div>'; }
@@ -7270,10 +7482,10 @@ function renderChartsPage() {
       </div>`;
     }).join('')+'</div>';
   }
-  const actualIncome=m.transactions.filter(x=>x.type==='income').reduce((s,x)=>s+(x.amountYen||toYen(x.amount,x.currency||'JPY')),0);
+  const actualIncome=m.transactions.filter(x=>x.type==='income' && countsInMonthly(x)).reduce((s,x)=>s+txAmountYen(x),0);
   const plannedIncome=m.plannedIncome.reduce((s,x)=>s+toYen(x.amount,x.currency||'JPY'),0);
   const inc=actualIncome + plannedIncome;
-  const exp=(m.transactions.filter(x=>x.type==='expense').reduce((s,x)=>s+(x.amountYen||toYen(x.amount,x.currency||'JPY')),0)) +
+  const exp=(m.transactions.filter(x=>x.type==='expense' && countsInMonthly(x)).reduce((s,x)=>s+txAmountYen(x),0)) +
             (m.fixedExpenses||[]).reduce((s,x)=>s+toYen(x.amount,x.currency||'JPY'),0);
   const maxV=Math.max(inc,exp,1);
   document.getElementById('typeChartWrap').innerHTML=`<div style="padding:16px">
@@ -7295,6 +7507,7 @@ function renderChartsPage() {
   </div>`;
   renderYearSummary();
   renderFamilyHealthGraph();
+  renderYearlyBudgetAuditGraph();
 }
 
 function renderChat() {
