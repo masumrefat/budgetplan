@@ -3052,6 +3052,7 @@ tr:hover td {
       <div class="card-title">🗒️ All Transactions <span class="card-hint">press <kbd>n</kbd> for new · <kbd>/</kbd> to search</span></div>
       <div class="btn-row">
         <button class="btn btn-danger btn-sm" id="deleteSelectedBtn" hidden>🗑 Delete <span id="delCountBadge"></span></button>
+        <button class="btn btn-ghost btn-sm" id="openBigExpenseFormBtn">💎 Add Big Expense</button>
         <button class="btn btn-primary btn-sm" id="openTxFormBtn">+ Add Transaction</button>
       </div>
     </div>
@@ -3090,7 +3091,7 @@ tr:hover td {
   <div class="modal-card" role="document" style="max-width:640px">
     <button type="button" class="modal-close" id="addTxCloseBtn" aria-label="Close">✕</button>
     <h2 class="modal-title" id="addTxTitle" style="text-align:left;margin-bottom:4px">Add Transaction</h2>
-    <p class="modal-sub" style="text-align:left;margin:0 0 20px 0">Record a new income or expense entry.</p>
+    <p class="modal-sub" id="addTxSubtitle" style="text-align:left;margin:0 0 20px 0">Record a new income or expense entry.</p>
     <form id="entryForm">
       <div class="form-grid">
         <div class="form-group">
@@ -3129,18 +3130,13 @@ tr:hover td {
           <label>Note / Description</label>
           <input id="txNote" placeholder="e.g. Kohyo supermarket, salary, Rent...">
         </div>
-        <div class="form-group full" id="txAuditOnlyWrap" style="background:var(--warning-soft);border:1px solid rgba(201,122,28,0.18);border-radius:12px;padding:12px 14px">
-          <label style="display:flex;align-items:flex-start;gap:10px;text-transform:none;letter-spacing:0;font-size:0.86rem;color:var(--text);font-family:'Manrope',system-ui,sans-serif;font-weight:700;margin:0">
-            <input id="txAuditOnly" type="checkbox" style="margin-top:2px">
-            <span>Yearly audit only / big purchase<br><small style="font-weight:500;color:var(--text-muted)">Use for expensive one-time items. It will show in Transactions and Yearly Summary, but will not count in monthly spending, monthly budget, dashboard, or monthly charts.</small></span>
-          </label>
-        </div>
+        <input id="txAuditOnly" type="checkbox" hidden>
       </div>
       <!-- Hidden — set by setEntryMode() for backward compatibility -->
       <span id="entryModeBadge" hidden></span>
       <div class="btn-row" style="margin-top:6px">
         <button type="button" class="btn btn-ghost" onclick="closeAddTxModal()">Cancel</button>
-        <button type="submit" class="btn btn-primary" style="flex:1">💾 Save Transaction</button>
+        <button type="submit" class="btn btn-primary" id="saveTxBtn" style="flex:1">💾 Save Transaction</button>
       </div>
       <div id="entryMessage" style="margin-top:12px;font-size:0.82rem;color:var(--text-soft);min-height:18px"></div>
     </form>
@@ -4239,11 +4235,11 @@ function populateSelects() {
 document.getElementById('txType').addEventListener('change',populateSelects);
 function updateAuditOnlyVisibility() {
   const type = document.getElementById('txType')?.value || 'expense';
-  const wrap = document.getElementById('txAuditOnlyWrap');
   const field = document.getElementById('txAuditOnly');
-  if (!wrap || !field) return;
-  wrap.style.display = type === 'expense' ? 'block' : 'none';
-  if (type !== 'expense') field.checked = false;
+  if (!field) return;
+  // No checkbox is shown in the normal transaction form. Big expenses are added
+  // through the separate "Add Big Expense" button only.
+  field.checked = !!(entryBigExpenseMode && type === 'expense');
 }
 
 // If the user changes any of the fields that drive the budget check after
@@ -4262,6 +4258,7 @@ function updateAuditOnlyVisibility() {
 // State for transaction edit mode
 let editingTxId = null;
 let editingTxLocation = null; // { year, monthIdx } where the tx being edited lives
+let entryBigExpenseMode = false; // true only when user clicks "Add Big Expense" or edits a big expense
 // Flag set when user explicitly confirms saving an over-budget expense
 let budgetOverrideConfirmed = false;
 
@@ -4665,19 +4662,49 @@ document.getElementById('overBudgetModal')?.addEventListener('click', (e) => {
 // ════════════════════════════════════════════════
 // ADD/EDIT TRANSACTION MODAL CONTROL
 // ════════════════════════════════════════════════
-function openAddTxModal(isEdit = false) {
+function openAddTxModal(isEdit = false, options = {}) {
   if (!canViewPrivateData()) { toast('Sign in first', true); return; }
   const modal = document.getElementById('addTxModal');
   if (!modal) return;
+
+  if (!isEdit) {
+    entryBigExpenseMode = !!options.bigExpense;
+    clearTxForm();
+    if (entryBigExpenseMode) {
+      document.getElementById('txType').value = 'expense';
+      populateSelects();
+    }
+  }
+
+  const typeSelect = document.getElementById('txType');
+  if (typeSelect) typeSelect.disabled = !!entryBigExpenseMode;
+  updateAuditOnlyVisibility();
+
   // Default the date to today if blank
   const dateField = document.getElementById('txDate');
   if (dateField && !dateField.value) dateField.value = today();
-  // Set the title text based on mode
+
   const titleEl = document.getElementById('addTxTitle');
-  if (titleEl) titleEl.textContent = isEdit ? 'Edit Transaction' : 'Add Transaction';
+  const subEl = document.getElementById('addTxSubtitle');
+  const saveBtn = document.getElementById('saveTxBtn');
+  if (isEdit) {
+    if (titleEl) titleEl.textContent = entryBigExpenseMode ? 'Edit Big Expense' : 'Edit Transaction';
+    if (subEl) subEl.textContent = entryBigExpenseMode
+      ? 'Update a one-time big purchase for the yearly audit only. It will not count in monthly expenses.'
+      : 'Update this monthly income or expense entry.';
+    if (saveBtn) saveBtn.textContent = entryBigExpenseMode ? '💾 Update Big Expense' : '💾 Update Transaction';
+  } else if (entryBigExpenseMode) {
+    if (titleEl) titleEl.textContent = 'Add Big Expense';
+    if (subEl) subEl.textContent = 'Record a one-time big purchase for yearly audit only. It will show in Transactions and yearly charts, but it will not count in monthly expenses or monthly budget.';
+    if (saveBtn) saveBtn.textContent = '💎 Save Big Expense';
+  } else {
+    if (titleEl) titleEl.textContent = 'Add Transaction';
+    if (subEl) subEl.textContent = 'Record a new income or expense entry.';
+    if (saveBtn) saveBtn.textContent = '💾 Save Transaction';
+  }
+
   modal.removeAttribute('hidden');
   document.body.style.overflow = 'hidden';
-  // Focus the amount field for fast entry on new transactions
   setTimeout(() => {
     if (!isEdit) {
       const amt = document.getElementById('txAmount');
@@ -4693,6 +4720,11 @@ function closeAddTxModal() {
   // If user was editing, cancel the edit state so the form is back to "add"
   if (typeof editingTxId !== 'undefined' && editingTxId) {
     cancelEditTx();
+  } else {
+    entryBigExpenseMode = false;
+    const typeSelect = document.getElementById('txType');
+    if (typeSelect) typeSelect.disabled = false;
+    updateAuditOnlyVisibility();
   }
 }
 
@@ -4705,8 +4737,9 @@ function updateFabVisibility() {
 }
 
 // Wire up open/close for the Add Tx modal
-document.getElementById('openTxFormBtn')?.addEventListener('click', () => openAddTxModal(false));
-document.getElementById('fabAddTx')?.addEventListener('click', () => openAddTxModal(false));
+document.getElementById('openTxFormBtn')?.addEventListener('click', () => openAddTxModal(false, { bigExpense: false }));
+document.getElementById('openBigExpenseFormBtn')?.addEventListener('click', () => openAddTxModal(false, { bigExpense: true }));
+document.getElementById('fabAddTx')?.addEventListener('click', () => openAddTxModal(false, { bigExpense: false }));
 document.getElementById('addTxCloseBtn')?.addEventListener('click', () => closeAddTxModal());
 document.getElementById('addTxModal')?.addEventListener('click', (e) => {
   if (e.target.id === 'addTxModal') closeAddTxModal();
@@ -4745,7 +4778,7 @@ document.addEventListener('keydown', (e) => {
 
   if (e.key === 'n' && onTxPage) {
     e.preventDefault();
-    if (typeof openAddTxModal === 'function') openAddTxModal(false);
+    if (typeof openAddTxModal === 'function') openAddTxModal(false, { bigExpense: false });
   } else if (e.key === '/' && onTxPage) {
     e.preventDefault();
     document.getElementById('filterSearch')?.focus();
@@ -4811,7 +4844,7 @@ document.getElementById('entryForm').addEventListener('submit', async e=>{
   const date=document.getElementById('txDate').value;
   const cat=document.getElementById('txCategory').value;
   const type=document.getElementById('txType').value;
-  const auditOnly = type === 'expense' && !!document.getElementById('txAuditOnly')?.checked;
+  const auditOnly = type === 'expense' && (entryBigExpenseMode || !!document.getElementById('txAuditOnly')?.checked);
   if(!date||!cat||amount<=0) { document.getElementById('entryMessage').textContent='⚠ Fill date, category and amount.'; return; }
 
   // Route the transaction to the month/year of the picked date, not the currently viewed month.
@@ -4917,6 +4950,10 @@ document.getElementById('entryForm').addEventListener('submit', async e=>{
     if (addModal && !addModal.hasAttribute('hidden')) {
       addModal.setAttribute('hidden', '');
       document.body.style.overflow = '';
+      entryBigExpenseMode = false;
+      const typeSelect = document.getElementById('txType');
+      if (typeSelect) typeSelect.disabled = false;
+      updateAuditOnlyVisibility();
     }
     return;
   }
@@ -4954,6 +4991,10 @@ document.getElementById('entryForm').addEventListener('submit', async e=>{
     if (addModal && !addModal.hasAttribute('hidden')) {
       addModal.setAttribute('hidden', '');
       document.body.style.overflow = '';
+      entryBigExpenseMode = false;
+      const typeSelect = document.getElementById('txType');
+      if (typeSelect) typeSelect.disabled = false;
+      updateAuditOnlyVisibility();
     }
   }, 600);
 });
@@ -4978,6 +5019,7 @@ function editTransaction(txId) {
 
   editingTxId = txId;
   editingTxLocation = { year: foundYear, monthIdx: foundMonthIdx };
+  entryBigExpenseMode = isYearlyAuditOnly(found);
 
   // Populate the form
   document.getElementById('txType').value = found.type;
@@ -5006,7 +5048,10 @@ function editTransaction(txId) {
 function cancelEditTx() {
   editingTxId = null;
   editingTxLocation = null;
+  entryBigExpenseMode = false;
   budgetOverrideConfirmed = false;
+  const typeSelect = document.getElementById('txType');
+  if (typeSelect) typeSelect.disabled = false;
   const form = document.getElementById('entryForm');
   let submitBtn = form ? form.querySelector('button[type="submit"]') : null;
   if (submitBtn) submitBtn.textContent = '💾 Save Transaction';
@@ -5020,7 +5065,7 @@ function clearTxForm() {
   document.getElementById('txAmount').value='';
   document.getElementById('txNote').value='';
   const auditField = document.getElementById('txAuditOnly');
-  if (auditField) auditField.checked = false;
+  if (auditField) auditField.checked = !!entryBigExpenseMode;
   document.getElementById('txDate').value=today();
   budgetOverrideConfirmed = false;
   document.getElementById('entryMessage').textContent='';
