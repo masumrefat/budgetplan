@@ -2065,48 +2065,62 @@ input[type="checkbox"]:focus-visible {
 }
 .tx-filter-clear { align-self: center; }
 
-
-/* ── Collapsible transaction tools / filters ── */
+/* ── Collapsible transaction tools/filter panel ── */
 .tx-tools-toggle {
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-muted);
+  border-radius: 999px;
+  padding: 7px 12px;
+  font: 700 0.76rem 'Manrope', system-ui, sans-serif;
+  cursor: pointer;
   display: inline-flex;
   align-items: center;
-  gap: 7px;
-  min-width: 36px;
+  gap: 6px;
+  box-shadow: var(--shadow-xs);
+  transition: all 0.18s ease;
 }
-.tx-tools-toggle .tx-tools-arrow {
+.tx-tools-toggle:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--accent-tint);
+}
+.tx-tools-toggle .arrow {
   display: inline-block;
   font-size: 0.9rem;
   line-height: 1;
   transition: transform 0.22s ease;
 }
-.tx-tools-toggle.is-collapsed .tx-tools-arrow { transform: rotate(-90deg); }
-.tx-tools-toggle .tx-tools-label { display: inline; }
+.tx-tools-toggle.active-filters {
+  color: var(--accent);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-tint);
+}
 .tx-tools-panel {
   overflow: hidden;
-  max-height: 420px;
+  max-height: 720px;
   opacity: 1;
   transform: translateY(0);
-  transition: max-height 0.26s ease, opacity 0.18s ease, transform 0.22s ease, margin-bottom 0.22s ease;
+  transition: max-height 0.28s ease, opacity 0.22s ease, transform 0.22s ease, margin 0.22s ease;
 }
-.tx-tools-panel.is-collapsed {
+.tx-tools-panel.collapsed {
   max-height: 0;
   opacity: 0;
+  margin: 0;
   transform: translateY(-6px);
-  margin-bottom: 0;
   pointer-events: none;
 }
-.tx-tools-panel .tx-cat-chips { margin-bottom: 14px; }
-.tx-tools-summary {
-  display: none;
-  margin: -4px 0 14px;
-  color: var(--text-soft);
-  font-size: 0.78rem;
+.tx-tools-panel-inner {
+  padding-top: 2px;
 }
-.tx-tools-summary.is-visible { display: block; }
-@media (max-width: 700px) {
-  .tx-tools-toggle .tx-tools-label { display: none; }
-  .tx-tools-toggle { padding-left: 10px; padding-right: 10px; }
+.tx-tools-actions {
+  margin-bottom: 12px;
 }
+@media(max-width:700px){
+  .tx-tools-toggle { width: 100%; justify-content: center; }
+  .tx-tools-panel { max-height: 900px; }
+}
+
 
 /* Tappable category chips for multi-select filtering */
 .tx-cat-chips {
@@ -3093,39 +3107,41 @@ tr:hover td {
   <div class="card">
     <div class="section-head">
       <div class="card-title">🗒️ All Transactions <span class="card-hint">press <kbd>n</kbd> for new · <kbd>/</kbd> to search</span></div>
-      <div class="btn-row">
-        <button class="btn btn-danger btn-sm" id="deleteSelectedBtn" hidden>🗑 Delete <span id="delCountBadge"></span></button>
-        <button class="btn btn-ghost btn-sm" id="txToolsToggleBtn" type="button" aria-expanded="true" aria-controls="txToolsPanel" title="Collapse filters and tools">
-          <span class="tx-tools-arrow" aria-hidden="true">⌄</span><span class="tx-tools-label">Tools</span>
-        </button>
-        <button class="btn btn-ghost btn-sm" id="openBigExpenseFormBtn">💎 Add Big Expense</button>
-        <button class="btn btn-primary btn-sm" id="openTxFormBtn">+ Add Transaction</button>
-      </div>
+      <button type="button" class="tx-tools-toggle" id="txToolsToggle" onclick="toggleTxToolsPanel()" aria-expanded="true" title="Show or hide transaction tools and filters">
+        <span class="arrow" aria-hidden="true">⌃</span><span id="txToolsToggleText">Hide tools</span>
+      </button>
     </div>
 
-    <div class="tx-tools-summary" id="txToolsSummary">Filters and tools are collapsed. Tap the arrow to expand.</div>
     <div class="tx-tools-panel" id="txToolsPanel">
-      <!-- Compact filter row — collapses into card seamlessly -->
-      <div class="tx-filter-row">
-        <input id="filterSearch" placeholder="🔍 Search notes or category…" class="tx-filter-search">
-        <select id="filterType" class="tx-filter-select">
-          <option value="">All types</option>
-          <option value="expense">Expense</option>
-          <option value="income">Income</option>
-        </select>
-        <input id="filterDateFrom" type="date" class="tx-filter-select" title="From date" aria-label="From date">
-        <input id="filterDateTo" type="date" class="tx-filter-select" title="To date" aria-label="To date">
-        <button type="button" class="btn btn-ghost btn-sm" id="selectFilteredBtn" title="Select all transactions currently shown">☑ Select shown</button>
-        <button type="button" class="btn btn-ghost btn-sm" id="clearSelectionBtn" hidden title="Clear selected transactions">☐ Clear selection</button>
-        <button type="button" class="btn btn-ghost btn-sm tx-filter-clear" onclick="clearFilters()" hidden id="filterClearBtn">✕ Clear filters</button>
+      <div class="tx-tools-panel-inner">
+        <div class="btn-row tx-tools-actions">
+          <button class="btn btn-danger btn-sm" id="deleteSelectedBtn" hidden>🗑 Delete <span id="delCountBadge"></span></button>
+          <button class="btn btn-ghost btn-sm" id="openBigExpenseFormBtn">💎 Add Big Expense</button>
+          <button class="btn btn-primary btn-sm" id="openTxFormBtn">+ Add Transaction</button>
+        </div>
+
+        <!-- Compact filter row — collapses into card seamlessly -->
+        <div class="tx-filter-row">
+          <input id="filterSearch" placeholder="🔍 Search notes or category…" class="tx-filter-search">
+          <select id="filterType" class="tx-filter-select">
+            <option value="">All types</option>
+            <option value="expense">Expense</option>
+            <option value="income">Income</option>
+          </select>
+          <input id="filterDateFrom" type="date" class="tx-filter-select" title="From date" aria-label="From date">
+          <input id="filterDateTo" type="date" class="tx-filter-select" title="To date" aria-label="To date">
+          <button type="button" class="btn btn-ghost btn-sm" id="selectFilteredBtn" title="Select all transactions currently shown">☑ Select shown</button>
+          <button type="button" class="btn btn-ghost btn-sm" id="clearSelectionBtn" hidden title="Clear selected transactions">☐ Clear selection</button>
+          <button type="button" class="btn btn-ghost btn-sm tx-filter-clear" onclick="clearFilters()" hidden id="filterClearBtn">✕ Clear filters</button>
+        </div>
+
+        <!-- Tap one or more categories to combine their totals. None selected = all shown. -->
+        <div class="tx-cat-chips" id="filterCatChips"></div>
+
+        <div id="filterTotals"></div>
+        <div id="selectedTotals"></div>
       </div>
-
-      <!-- Tap one or more categories to combine their totals. None selected = all shown. -->
-      <div class="tx-cat-chips" id="filterCatChips"></div>
     </div>
-
-    <div id="filterTotals"></div>
-    <div id="selectedTotals"></div>
     <div class="tx-grouped" id="txGroupedList"><div class="empty-state">Sign in to load data</div></div>
   </div>
 </div>
@@ -3310,12 +3326,15 @@ tr:hover td {
 
   <div class="card">
     <div class="section-head">
-      <div class="card-title">🏷️ Big Expenses by Category</div>
-      <div style="font-size:0.8rem;color:var(--text-soft)">Separate yearly overview of only big expenses — monthly expenses are excluded</div>
+      <div class="card-title">💎 Yearly Big Expense Overview</div>
+      <div style="font-size:0.8rem;color:var(--text-soft)">All yearly-audit big purchases grouped by category</div>
     </div>
-    <div id="bigExpenseCategoryStatus" style="margin-bottom:14px"></div>
-    <div class="family-health-canvas-wrap"><canvas id="bigExpenseCategoryChart"></canvas></div>
-    <div id="bigExpenseCategoryList" style="margin-top:14px"></div>
+    <div id="yearBigExpenseOverviewStatus" style="margin-bottom:14px"></div>
+    <div class="cat-chart-grid">
+      <div class="cat-chart-canvas"><canvas id="yearBigExpenseCategoryChart"></canvas></div>
+      <div id="yearBigExpenseCategoryList" class="cat-chart-summary"></div>
+    </div>
+    <div id="yearBigExpenseDetailList" style="margin-top:16px"></div>
   </div>
 
   <div class="card">
@@ -3645,8 +3664,8 @@ if (window.matchMedia) {
 // Initialise theme UI as soon as DOM is ready
 document.addEventListener('DOMContentLoaded', () => {
   applyTheme();
-  initTransactionToolsToggle();
   if (typeof updateFabVisibility === 'function') updateFabVisibility();
+  if (typeof initTxToolsPanel === 'function') initTxToolsPanel();
 });
 
 // ════════════════════════════════════════════════
@@ -4255,6 +4274,56 @@ function showPage(name) {
 document.querySelectorAll('.nav-tab').forEach(btn=>{
   btn.addEventListener('click',()=>showPage(btn.dataset.page));
 });
+
+// ════════════════════════════════════════════════
+// COLLAPSIBLE TRANSACTION TOOLS / FILTERS
+// Keeps the transaction page clean on mobile. The arrow expands/collapses
+// the add buttons, filters, category chips, and filter totals.
+// ════════════════════════════════════════════════
+function transactionToolsHaveActiveFilters() {
+  const filterType = document.getElementById('filterType')?.value || '';
+  const search = document.getElementById('filterSearch')?.value || '';
+  const dateFrom = document.getElementById('filterDateFrom')?.value || '';
+  const dateTo = document.getElementById('filterDateTo')?.value || '';
+  return !!(filterType || search || dateFrom || dateTo || (typeof selectedCats !== 'undefined' && selectedCats.size));
+}
+
+function updateTxToolsToggleUI() {
+  const panel = document.getElementById('txToolsPanel');
+  const btn = document.getElementById('txToolsToggle');
+  const text = document.getElementById('txToolsToggleText');
+  if (!panel || !btn || !text) return;
+  const collapsed = panel.classList.contains('collapsed');
+  const arrow = btn.querySelector('.arrow');
+  btn.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+  if (arrow) arrow.textContent = collapsed ? '⌄' : '⌃';
+  text.textContent = collapsed
+    ? (transactionToolsHaveActiveFilters() ? 'Show tools • filters active' : 'Show tools')
+    : 'Hide tools';
+  btn.classList.toggle('active-filters', transactionToolsHaveActiveFilters());
+}
+
+function setTxToolsCollapsed(collapsed, remember=true) {
+  const panel = document.getElementById('txToolsPanel');
+  if (!panel) return;
+  panel.classList.toggle('collapsed', !!collapsed);
+  if (remember) localStorage.setItem('txToolsCollapsed', collapsed ? '1' : '0');
+  updateTxToolsToggleUI();
+}
+
+function toggleTxToolsPanel() {
+  const panel = document.getElementById('txToolsPanel');
+  if (!panel) return;
+  setTxToolsCollapsed(!panel.classList.contains('collapsed'));
+}
+
+function initTxToolsPanel() {
+  const saved = localStorage.getItem('txToolsCollapsed');
+  const isMobile = window.matchMedia && window.matchMedia('(max-width: 700px)').matches;
+  // Default: collapsed on phone, expanded on desktop. User choice is remembered after first click.
+  const shouldCollapse = saved === null ? isMobile : saved === '1';
+  setTxToolsCollapsed(shouldCollapse, false);
+}
 
 // ════════════════════════════════════════════════
 // MONTH BAR
@@ -6297,33 +6366,6 @@ document.getElementById('exportAllExcelBtn')?.addEventListener('click', download
 // Categories the user has tapped on. Empty = show all.
 let selectedCats = new Set();
 
-let txToolsCollapsed = false;
-
-function setTransactionToolsCollapsed(collapsed) {
-  txToolsCollapsed = !!collapsed;
-  const panel = document.getElementById('txToolsPanel');
-  const btn = document.getElementById('txToolsToggleBtn');
-  const summary = document.getElementById('txToolsSummary');
-  if (panel) panel.classList.toggle('is-collapsed', txToolsCollapsed);
-  if (btn) {
-    btn.classList.toggle('is-collapsed', txToolsCollapsed);
-    btn.setAttribute('aria-expanded', txToolsCollapsed ? 'false' : 'true');
-    btn.title = txToolsCollapsed ? 'Expand filters and tools' : 'Collapse filters and tools';
-  }
-  if (summary) summary.classList.toggle('is-visible', txToolsCollapsed);
-  try { localStorage.setItem('txToolsCollapsed', txToolsCollapsed ? '1' : '0'); } catch(e) {}
-}
-
-function initTransactionToolsToggle() {
-  const btn = document.getElementById('txToolsToggleBtn');
-  if (!btn || btn.dataset.ready === '1') return;
-  btn.dataset.ready = '1';
-  let saved = false;
-  try { saved = localStorage.getItem('txToolsCollapsed') === '1'; } catch(e) {}
-  setTransactionToolsCollapsed(saved);
-  btn.addEventListener('click', () => setTransactionToolsCollapsed(!txToolsCollapsed));
-}
-
 // Build the tappable category chips from the categories that actually
 // appear in the current month (transactions + fixed expenses).
 function renderCategoryChips() {
@@ -6847,6 +6889,7 @@ function renderTransactionTable() {
     if (selectedCats.size || filterType || search || dateFrom || dateTo) clearBtn.removeAttribute('hidden');
     else clearBtn.setAttribute('hidden', '');
   }
+  if (typeof updateTxToolsToggleUI === 'function') updateTxToolsToggleUI();
   const m = curMonth();
   let txs = (m.transactions || []).slice();
 
@@ -7264,12 +7307,10 @@ function getYearSummaryData(year=currentYear) {
     return acc;
   }, {income:0, expense:0, monthlyExpense:0, balance:0, monthlyBalance:0, budget:0, txCount:0, fixed:0, auditExpense:0});
   const expByCat = {};
-  const auditByCat = {};
   months.forEach(m => {
     (m.transactions||[]).filter(x=>x.type==='expense').forEach(x=>{
       const y = txAmountYen(x);
       expByCat[x.category] = (expByCat[x.category]||0)+y;
-      if(isYearlyAuditOnly(x)) auditByCat[x.category] = (auditByCat[x.category]||0)+y;
     });
     (m.fixedExpenses||[]).forEach(x=>{
       const y = toYen(x.amount,x.currency||'JPY');
@@ -7277,8 +7318,7 @@ function getYearSummaryData(year=currentYear) {
     });
   });
   const topCats = Object.entries(expByCat).sort((a,b)=>b[1]-a[1]).slice(0,6);
-  const bigExpenseCats = Object.entries(auditByCat).sort((a,b)=>b[1]-a[1]);
-  return { monthRows, totals, topCats, bigExpenseCats };
+  return { monthRows, totals, topCats };
 }
 
 function renderYearSummary() {
@@ -7579,110 +7619,170 @@ function renderYearlyBudgetAuditGraph() {
 }
 
 
-function renderYearlyBigExpenseCategoryOverview() {
-  const statusEl = document.getElementById('bigExpenseCategoryStatus');
-  const listEl = document.getElementById('bigExpenseCategoryList');
-  const canvas = document.getElementById('bigExpenseCategoryChart');
-  if(!statusEl || !listEl || !canvas) return;
+function getYearlyBigExpenseOverviewData(year=currentYear) {
+  const yd = ensureYearExists(year);
+  const rows = [];
+  (yd.months || []).forEach((m, monthIdx) => {
+    (m.transactions || [])
+      .filter(t => t.type === 'expense' && isYearlyAuditOnly(t))
+      .forEach(t => {
+        rows.push({
+          id: t.id || '',
+          date: t.date || '',
+          monthIdx,
+          month: MONTHS[monthIdx],
+          category: t.category || 'Other',
+          note: t.note || '',
+          author: t.author || '',
+          amountYen: txAmountYen(t),
+          amount: Number(t.amount || 0),
+          currency: t.currency || 'JPY'
+        });
+      });
+  });
+  rows.sort((a,b) => (a.date || '').localeCompare(b.date || ''));
+  const byCategory = {};
+  const byMonth = Array(12).fill(0);
+  rows.forEach(r => {
+    byCategory[r.category] = (byCategory[r.category] || 0) + r.amountYen;
+    byMonth[r.monthIdx] = (byMonth[r.monthIdx] || 0) + r.amountYen;
+  });
+  const categories = Object.entries(byCategory)
+    .map(([category, totalYen]) => ({ category, totalYen, count: rows.filter(r => r.category === category).length }))
+    .sort((a,b) => b.totalYen - a.totalYen);
+  const totalYen = rows.reduce((s,r) => s + r.amountYen, 0);
+  return { rows, categories, byMonth, totalYen };
+}
+
+function renderYearlyBigExpenseOverview() {
+  const statusEl = document.getElementById('yearBigExpenseOverviewStatus');
+  const listEl = document.getElementById('yearBigExpenseCategoryList');
+  const detailEl = document.getElementById('yearBigExpenseDetailList');
+  const canvas = document.getElementById('yearBigExpenseCategoryChart');
+  if(!statusEl || !listEl || !detailEl || !canvas) return;
   if (yearlyBigExpenseCategoryChartInstance) { yearlyBigExpenseCategoryChartInstance.destroy(); yearlyBigExpenseCategoryChartInstance = null; }
   const ctx = canvas.getContext('2d');
   if(!canViewPrivateData()) {
-    statusEl.innerHTML = '<div class="empty-state" style="padding:10px">🔒 Login to view big expense categories</div>';
+    statusEl.innerHTML = '<div class="empty-state" style="padding:10px">🔒 Login to view big expense overview</div>';
     listEl.innerHTML = '';
+    detailEl.innerHTML = '';
     ctx.clearRect(0,0,canvas.width,canvas.height);
     return;
   }
 
-  const data = getYearSummaryData(currentYear);
-  const cats = data.bigExpenseCats || [];
-  const total = cats.reduce((s, [,v]) => s + Number(v || 0), 0);
-  const activeMonths = data.monthRows.filter(r => Number(r.auditExpense || 0) > 0).length;
-  const top = cats[0];
+  const data = getYearlyBigExpenseOverviewData(currentYear);
+  const yearData = getYearSummaryData(currentYear);
+  const yearlyBudget = Number(yearData.totals.budget || 0);
+  const normalMonthlyExpense = Number(yearData.totals.monthlyExpense || 0);
+  const totalWithBig = normalMonthlyExpense + data.totalYen;
+  const diff = yearlyBudget - totalWithBig;
+  const hasBudget = yearlyBudget > 0;
+  const biggest = data.categories[0];
 
-  if(!cats.length) {
+  if(!data.rows.length) {
     statusEl.innerHTML = `
       <div class="angel-head" style="margin-bottom:8px">
         <div>
-          <div style="font-size:0.9rem;font-weight:700;margin-bottom:4px">Big expense category overview for ${currentYear}</div>
-          <div style="font-size:0.82rem;color:var(--text-soft)">No big expenses are recorded for this year yet. Use the <strong>Add Big Expense</strong> button to keep one-time purchases separate from monthly spending.</div>
+          <div style="font-size:0.9rem;font-weight:700;margin-bottom:4px">No big expenses recorded for ${currentYear}</div>
+          <div style="font-size:0.82rem;color:var(--text-soft)">Tap <strong>Add Big Expense</strong> in Transactions when you buy a one-time large item.</div>
         </div>
-        <span class="angel-badge angel-mid">No data</span>
+        <span class="angel-badge angel-mid">No big expenses</span>
       </div>`;
-    listEl.innerHTML = '<div class="empty-state" style="padding:14px">No yearly big expense categories yet</div>';
+    listEl.innerHTML = '<div class="empty-state"><div class="e-icon">💎</div>No yearly-audit big expenses this year</div>';
+    detailEl.innerHTML = '';
     ctx.clearRect(0,0,canvas.width,canvas.height);
     return;
   }
+
+  const budgetMsg = !hasBudget
+    ? 'No yearly budget set yet. Set monthly budgets to compare big purchases against the year budget.'
+    : diff >= 0
+      ? `After including all big expenses, you are still inside the yearly budget by ${fmt(diff)}.`
+      : `After including all big expenses, you are out of yearly budget by ${fmt(Math.abs(diff))}.`;
+  const budgetCls = !hasBudget ? 'angel-mid' : (diff >= 0 ? 'angel-good' : 'angel-bad');
+  const budgetStatus = !hasBudget ? 'No yearly budget set' : (diff >= 0 ? 'Inside yearly budget' : 'Out of yearly budget');
 
   statusEl.innerHTML = `
     <div class="angel-head" style="margin-bottom:8px">
       <div>
-        <div style="font-size:0.9rem;font-weight:700;margin-bottom:4px">Big expense category overview for ${currentYear}</div>
-        <div style="font-size:0.82rem;color:var(--text-soft)">Only yearly-audit big purchases are counted here. Monthly expenses and fixed expenses are not included.</div>
+        <div style="font-size:0.9rem;font-weight:700;margin-bottom:4px">Big expense overview for ${currentYear}</div>
+        <div style="font-size:0.82rem;color:var(--text-soft)">${budgetMsg}</div>
       </div>
-      <span class="angel-badge angel-mid">${cats.length} categories</span>
+      <span class="angel-badge ${budgetCls}">${budgetStatus}</span>
     </div>
     <div class="angel-grid" style="margin-top:10px">
-      <div class="angel-metric"><div class="angel-metric-label">Total big expenses</div><div class="angel-metric-value amount-neg">${fmt(total)}</div></div>
-      <div class="angel-metric"><div class="angel-metric-label">Top category</div><div class="angel-metric-value">${CAT_ICONS[top[0]]||''} ${escH(top[0])}</div></div>
-      <div class="angel-metric"><div class="angel-metric-label">Top category amount</div><div class="angel-metric-value amount-neg">${fmt(top[1])}</div></div>
-      <div class="angel-metric"><div class="angel-metric-label">Months with big expenses</div><div class="angel-metric-value">${activeMonths}</div></div>
+      <div class="angel-metric"><div class="angel-metric-label">Big expense total</div><div class="angel-metric-value amount-neg">${fmt(data.totalYen)}</div></div>
+      <div class="angel-metric"><div class="angel-metric-label">Number of items</div><div class="angel-metric-value">${data.rows.length}</div></div>
+      <div class="angel-metric"><div class="angel-metric-label">Categories used</div><div class="angel-metric-value">${data.categories.length}</div></div>
+      <div class="angel-metric"><div class="angel-metric-label">Biggest category</div><div class="angel-metric-value">${biggest ? escH(biggest.category) : '—'}</div></div>
     </div>`;
 
-  const maxVal = Math.max(...cats.map(([,v])=>Number(v||0)), 1);
-  listEl.innerHTML = `
-    <div style="font-size:0.8rem;font-weight:700;color:var(--text-soft);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px">Category totals for the year</div>
-    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px">
-      ${cats.map(([cat,val])=>{
-        const pct = total > 0 ? Math.round((val / total) * 100) : 0;
-        const bar = Math.round((val / maxVal) * 100);
-        return `<div style="padding:12px 14px;border:1px solid var(--border-faint);border-radius:14px;background:var(--surface);box-shadow:var(--shadow-xs)">
-          <div style="display:flex;justify-content:space-between;gap:10px;align-items:center;margin-bottom:8px">
-            <div style="font-weight:700;font-size:0.9rem;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${CAT_ICONS[cat]||''} ${escH(cat)}</div>
-            <div class="amount-neg" style="font-weight:800;white-space:nowrap">${fmt(val)}</div>
-          </div>
-          <div style="display:flex;justify-content:space-between;font-size:0.74rem;color:var(--text-soft);margin-bottom:5px"><span>${pct}% of big expenses</span><span>${fmt(val)}</span></div>
-          <div class="progress-bar"><div class="progress-fill fill-warn" style="width:${bar}%"></div></div>
-        </div>`;
-      }).join('')}
+  listEl.innerHTML = data.categories.map(item => {
+    const pct = data.totalYen ? Math.round((item.totalYen / data.totalYen) * 100) : 0;
+    const bg = CAT_COLORS[item.category] || '#e0e0e0';
+    return `<div class="cat-chart-row">
+      <span class="cat-chart-swatch" style="background:${bg}"></span>
+      <div class="cat-chart-text">
+        <div class="cat-chart-name">${CAT_ICONS[item.category] || '💎'} ${escH(item.category)}</div>
+        <div class="cat-chart-amt">${item.count} item${item.count===1?'':'s'} · <span class="cat-chart-pct">${pct}% of big expenses</span></div>
+      </div>
+      <div class="cat-legend-right">
+        <div class="cat-legend-amount">${fmt(item.totalYen)}</div>
+      </div>
+    </div>`;
+  }).join('');
+
+  detailEl.innerHTML = `
+    <div class="tbl-wrap">
+      <table>
+        <thead><tr><th>Date</th><th>Category</th><th>Note</th><th>Author</th><th style="text-align:right">Amount</th></tr></thead>
+        <tbody>
+          ${data.rows.map(r => `<tr>
+            <td>${escH(r.date || r.month)}</td>
+            <td><span class="cat-badge" style="background:${CAT_COLORS[r.category]||'#eee'}">${CAT_ICONS[r.category]||'💎'} ${escH(r.category)}</span></td>
+            <td>${escH(r.note || 'Big expense')}</td>
+            <td>${escH(r.author || '')}</td>
+            <td style="text-align:right;font-weight:700;color:var(--danger)">${fmt(r.amountYen)}</td>
+          </tr>`).join('')}
+        </tbody>
+        <tfoot><tr><th colspan="4" style="text-align:right">Total big expenses</th><th style="text-align:right">${fmt(data.totalYen)}</th></tr></tfoot>
+      </table>
     </div>`;
 
-  const labels = cats.map(([cat]) => `${CAT_ICONS[cat]||''} ${cat}`);
-  const values = cats.map(([,val]) => Number(convertFromYen(val || 0).toFixed(2)));
-  const yTitle = displayCurrency === 'EUR' ? 'Amount (€)' : 'Amount (¥)';
-
+  const labels = data.categories.map(x => x.category);
+  const values = data.categories.map(x => Number(convertFromYen(x.totalYen).toFixed(2)));
   yearlyBigExpenseCategoryChartInstance = new Chart(ctx, {
     type: 'bar',
     data: {
       labels,
       datasets: [{
-        label: displayCurrency === 'EUR' ? 'Big Expenses by Category (€)' : 'Big Expenses by Category (¥)',
+        label: displayCurrency === 'EUR' ? 'Big Expense by Category (€)' : 'Big Expense by Category (¥)',
         data: values,
-        backgroundColor: 'rgba(201, 122, 28, 0.35)',
-        borderColor: '#c97a1c',
+        backgroundColor: labels.map(cat => CAT_COLORS[cat] || 'rgba(201,122,28,0.35)'),
+        borderColor: labels.map(() => 'rgba(120,102,84,0.35)'),
         borderWidth: 1,
-        borderRadius: 7
+        borderRadius: 8
       }]
     },
     options: {
-      indexAxis: 'y',
       responsive: true,
       maintainAspectRatio: false,
       plugins: {
         legend: { display: false },
         tooltip: {
           callbacks: {
-            afterBody: (items) => {
-              const i = items?.[0]?.dataIndex || 0;
-              const yenVal = cats[i]?.[1] || 0;
-              const pct = total > 0 ? Math.round((yenVal / total) * 100) : 0;
-              return `${pct}% of yearly big expenses`;
+            afterLabel: (item) => {
+              const cat = labels[item.dataIndex];
+              const found = data.categories.find(x => x.category === cat);
+              const pct = found && data.totalYen ? Math.round((found.totalYen / data.totalYen) * 100) : 0;
+              return `${found ? found.count : 0} item(s) · ${pct}% of big expenses`;
             }
           }
         }
       },
       scales: {
-        x: { beginAtZero: true, title: { display: true, text: yTitle } },
-        y: { grid: { display: false } }
+        x: { grid: { display: false }, ticks: { maxRotation: 45, minRotation: 0 } },
+        y: { beginAtZero: true, title: { display: true, text: displayCurrency === 'EUR' ? 'Amount (€)' : 'Amount (¥)' } }
       }
     }
   });
@@ -7709,7 +7809,7 @@ function renderChartsPage() {
     renderYearSummary();
     renderFamilyHealthGraph();
     renderYearlyBudgetAuditGraph();
-    renderYearlyBigExpenseCategoryOverview();
+    renderYearlyBigExpenseOverview();
     return;
   }
   const m=curMonth();
@@ -7755,7 +7855,7 @@ function renderChartsPage() {
   renderYearSummary();
   renderFamilyHealthGraph();
   renderYearlyBudgetAuditGraph();
-  renderYearlyBigExpenseCategoryOverview();
+  renderYearlyBigExpenseOverview();
 }
 
 function renderChat() {
@@ -7851,7 +7951,6 @@ function renderPage(name) {
 // ════════════════════════════════════════════════
 document.addEventListener('DOMContentLoaded', ()=>{
   checkSetup();
-  initTransactionToolsToggle();
   ensureYearExists(currentYear);
   saveLocal();
   document.getElementById('txDate').value=today();
