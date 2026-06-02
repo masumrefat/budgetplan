@@ -3261,6 +3261,16 @@ tr:hover td {
 
   <div class="card">
     <div class="section-head">
+      <div class="card-title">🏷️ Big Expenses by Category</div>
+      <div style="font-size:0.8rem;color:var(--text-soft)">Separate yearly overview of only big expenses — monthly expenses are excluded</div>
+    </div>
+    <div id="bigExpenseCategoryStatus" style="margin-bottom:14px"></div>
+    <div class="family-health-canvas-wrap"><canvas id="bigExpenseCategoryChart"></canvas></div>
+    <div id="bigExpenseCategoryList" style="margin-top:14px"></div>
+  </div>
+
+  <div class="card">
+    <div class="section-head">
       <div class="card-title">🗓️ Yearly Summary</div>
       <div style="font-size:0.8rem;color:var(--text-soft)">Use the year scroller above to switch summaries</div>
     </div>
@@ -7140,6 +7150,7 @@ function deletePlannedIncome(id) {
 
 let familyHealthChartInstance = null;
 let yearlyBudgetAuditChartInstance = null;
+let yearlyBigExpenseCategoryChartInstance = null;
 
 function getYearSummaryData(year=currentYear) {
   const yd = ensureYearExists(year);
@@ -7176,10 +7187,12 @@ function getYearSummaryData(year=currentYear) {
     return acc;
   }, {income:0, expense:0, monthlyExpense:0, balance:0, monthlyBalance:0, budget:0, txCount:0, fixed:0, auditExpense:0});
   const expByCat = {};
+  const auditByCat = {};
   months.forEach(m => {
     (m.transactions||[]).filter(x=>x.type==='expense').forEach(x=>{
       const y = txAmountYen(x);
       expByCat[x.category] = (expByCat[x.category]||0)+y;
+      if(isYearlyAuditOnly(x)) auditByCat[x.category] = (auditByCat[x.category]||0)+y;
     });
     (m.fixedExpenses||[]).forEach(x=>{
       const y = toYen(x.amount,x.currency||'JPY');
@@ -7187,7 +7200,8 @@ function getYearSummaryData(year=currentYear) {
     });
   });
   const topCats = Object.entries(expByCat).sort((a,b)=>b[1]-a[1]).slice(0,6);
-  return { monthRows, totals, topCats };
+  const bigExpenseCats = Object.entries(auditByCat).sort((a,b)=>b[1]-a[1]);
+  return { monthRows, totals, topCats, bigExpenseCats };
 }
 
 function renderYearSummary() {
@@ -7487,6 +7501,116 @@ function renderYearlyBudgetAuditGraph() {
   });
 }
 
+
+function renderYearlyBigExpenseCategoryOverview() {
+  const statusEl = document.getElementById('bigExpenseCategoryStatus');
+  const listEl = document.getElementById('bigExpenseCategoryList');
+  const canvas = document.getElementById('bigExpenseCategoryChart');
+  if(!statusEl || !listEl || !canvas) return;
+  if (yearlyBigExpenseCategoryChartInstance) { yearlyBigExpenseCategoryChartInstance.destroy(); yearlyBigExpenseCategoryChartInstance = null; }
+  const ctx = canvas.getContext('2d');
+  if(!canViewPrivateData()) {
+    statusEl.innerHTML = '<div class="empty-state" style="padding:10px">🔒 Login to view big expense categories</div>';
+    listEl.innerHTML = '';
+    ctx.clearRect(0,0,canvas.width,canvas.height);
+    return;
+  }
+
+  const data = getYearSummaryData(currentYear);
+  const cats = data.bigExpenseCats || [];
+  const total = cats.reduce((s, [,v]) => s + Number(v || 0), 0);
+  const activeMonths = data.monthRows.filter(r => Number(r.auditExpense || 0) > 0).length;
+  const top = cats[0];
+
+  if(!cats.length) {
+    statusEl.innerHTML = `
+      <div class="angel-head" style="margin-bottom:8px">
+        <div>
+          <div style="font-size:0.9rem;font-weight:700;margin-bottom:4px">Big expense category overview for ${currentYear}</div>
+          <div style="font-size:0.82rem;color:var(--text-soft)">No big expenses are recorded for this year yet. Use the <strong>Add Big Expense</strong> button to keep one-time purchases separate from monthly spending.</div>
+        </div>
+        <span class="angel-badge angel-mid">No data</span>
+      </div>`;
+    listEl.innerHTML = '<div class="empty-state" style="padding:14px">No yearly big expense categories yet</div>';
+    ctx.clearRect(0,0,canvas.width,canvas.height);
+    return;
+  }
+
+  statusEl.innerHTML = `
+    <div class="angel-head" style="margin-bottom:8px">
+      <div>
+        <div style="font-size:0.9rem;font-weight:700;margin-bottom:4px">Big expense category overview for ${currentYear}</div>
+        <div style="font-size:0.82rem;color:var(--text-soft)">Only yearly-audit big purchases are counted here. Monthly expenses and fixed expenses are not included.</div>
+      </div>
+      <span class="angel-badge angel-mid">${cats.length} categories</span>
+    </div>
+    <div class="angel-grid" style="margin-top:10px">
+      <div class="angel-metric"><div class="angel-metric-label">Total big expenses</div><div class="angel-metric-value amount-neg">${fmt(total)}</div></div>
+      <div class="angel-metric"><div class="angel-metric-label">Top category</div><div class="angel-metric-value">${CAT_ICONS[top[0]]||''} ${escH(top[0])}</div></div>
+      <div class="angel-metric"><div class="angel-metric-label">Top category amount</div><div class="angel-metric-value amount-neg">${fmt(top[1])}</div></div>
+      <div class="angel-metric"><div class="angel-metric-label">Months with big expenses</div><div class="angel-metric-value">${activeMonths}</div></div>
+    </div>`;
+
+  const maxVal = Math.max(...cats.map(([,v])=>Number(v||0)), 1);
+  listEl.innerHTML = `
+    <div style="font-size:0.8rem;font-weight:700;color:var(--text-soft);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px">Category totals for the year</div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px">
+      ${cats.map(([cat,val])=>{
+        const pct = total > 0 ? Math.round((val / total) * 100) : 0;
+        const bar = Math.round((val / maxVal) * 100);
+        return `<div style="padding:12px 14px;border:1px solid var(--border-faint);border-radius:14px;background:var(--surface);box-shadow:var(--shadow-xs)">
+          <div style="display:flex;justify-content:space-between;gap:10px;align-items:center;margin-bottom:8px">
+            <div style="font-weight:700;font-size:0.9rem;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${CAT_ICONS[cat]||''} ${escH(cat)}</div>
+            <div class="amount-neg" style="font-weight:800;white-space:nowrap">${fmt(val)}</div>
+          </div>
+          <div style="display:flex;justify-content:space-between;font-size:0.74rem;color:var(--text-soft);margin-bottom:5px"><span>${pct}% of big expenses</span><span>${fmt(val)}</span></div>
+          <div class="progress-bar"><div class="progress-fill fill-warn" style="width:${bar}%"></div></div>
+        </div>`;
+      }).join('')}
+    </div>`;
+
+  const labels = cats.map(([cat]) => `${CAT_ICONS[cat]||''} ${cat}`);
+  const values = cats.map(([,val]) => Number(convertFromYen(val || 0).toFixed(2)));
+  const yTitle = displayCurrency === 'EUR' ? 'Amount (€)' : 'Amount (¥)';
+
+  yearlyBigExpenseCategoryChartInstance = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [{
+        label: displayCurrency === 'EUR' ? 'Big Expenses by Category (€)' : 'Big Expenses by Category (¥)',
+        data: values,
+        backgroundColor: 'rgba(201, 122, 28, 0.35)',
+        borderColor: '#c97a1c',
+        borderWidth: 1,
+        borderRadius: 7
+      }]
+    },
+    options: {
+      indexAxis: 'y',
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          callbacks: {
+            afterBody: (items) => {
+              const i = items?.[0]?.dataIndex || 0;
+              const yenVal = cats[i]?.[1] || 0;
+              const pct = total > 0 ? Math.round((yenVal / total) * 100) : 0;
+              return `${pct}% of yearly big expenses`;
+            }
+          }
+        }
+      },
+      scales: {
+        x: { beginAtZero: true, title: { display: true, text: yTitle } },
+        y: { grid: { display: false } }
+      }
+    }
+  });
+}
+
 function renderChartsPage() {
   renderYearScroller();
   if(!canViewPrivateData()){
@@ -7508,6 +7632,7 @@ function renderChartsPage() {
     renderYearSummary();
     renderFamilyHealthGraph();
     renderYearlyBudgetAuditGraph();
+    renderYearlyBigExpenseCategoryOverview();
     return;
   }
   const m=curMonth();
@@ -7553,6 +7678,7 @@ function renderChartsPage() {
   renderYearSummary();
   renderFamilyHealthGraph();
   renderYearlyBudgetAuditGraph();
+  renderYearlyBigExpenseCategoryOverview();
 }
 
 function renderChat() {
