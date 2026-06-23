@@ -4479,10 +4479,11 @@ function showAdjustBudgetsStep() {
     const spent = byCat[c] || 0;
     const left = budgetYen - spent;
     const isHighlight = c === ctx.category;
-    const isOver = budgetYen > 0 && left < 0;
+    const hasBudget = hasCategoryBudgetSet(m, c);
+    const isOver = hasBudget && left < 0;
     const rowClass = isHighlight ? 'highlight' : (isOver ? 'over' : '');
-    const metaText = budgetYen > 0
-      ? `Spent ${fmt(spent)} · ${left >= 0 ? `${fmt(left)} left` : `${fmt(Math.abs(left))} over`}`
+    const metaText = hasBudget
+      ? `Budget ${fmt(budgetYen)} · Spent ${fmt(spent)} · ${left >= 0 ? `${fmt(left)} left` : `${fmt(Math.abs(left))} over`}`
       : `Spent ${fmt(spent)} · No budget set`;
     return `<div class="obm-adjust-row ${rowClass}" data-cat="${escH(c)}">
       <div class="obm-adjust-name">
@@ -4514,8 +4515,8 @@ function showAdjustBudgetsStep() {
     const wouldBeSpent = ctx.alreadySpent + ctx.newAmtYen;
     const newLeft = newBudgetYen - wouldBeSpent;
     const sumEl = document.getElementById('obmAdjustSummary');
-    if (newBudgetYen === 0) {
-      sumEl.innerHTML = `<strong>${escH(targetCat)}</strong>: no budget set. The transaction will save without a budget limit.`;
+    if (newBudgetYen === 0 && wouldBeSpent > 0) {
+      sumEl.innerHTML = `<strong>⚠ ${escH(targetCat)}</strong>: budget is ${fmt(0)}, so this transaction will be over by <strong>${fmt(wouldBeSpent)}</strong>. Increase the budget or transfer money.`;
     } else if (newLeft >= 0) {
       sumEl.innerHTML = `<strong>✓ ${escH(targetCat)}</strong>: new budget ${fmt(newBudgetYen)} fits the transaction. <strong>${fmt(newLeft)}</strong> will remain after saving.`;
     } else {
@@ -4952,6 +4953,19 @@ function getCategoryBudgetYen(monthObj, category) {
   return toYen(amt, cur);
 }
 
+// A budget is considered "set" when the category exists in the budgets object.
+// This is important because a 0 budget is a real budget limit: any spending
+// should be treated as over-budget, not as "No budget".
+function hasCategoryBudgetSet(monthObj, category) {
+  return !!(monthObj && monthObj.budgets && Object.prototype.hasOwnProperty.call(monthObj.budgets, category));
+}
+
+function budgetPct(spentYen, budgetYen, hasBudget) {
+  if (!hasBudget) return 0;
+  if (budgetYen > 0) return (spentYen / budgetYen) * 100;
+  return spentYen > 0 ? 101 : 0;
+}
+
 
 function isYearlyAuditOnly(t) {
   return !!(t && (t.auditOnly === true || t.scope === 'yearly_audit'));
@@ -4990,7 +5004,7 @@ document.getElementById('entryForm').addEventListener('submit', async e=>{
   // The user can: cancel, adjust budgets, or save anyway.
   if (type === 'expense' && !auditOnly && !budgetOverrideConfirmed) {
     const budgetYen = getCategoryBudgetYen(targetMonth, cat);
-    if (budgetYen > 0) {
+    if (hasCategoryBudgetSet(targetMonth, cat)) {
       const newAmtYen = toYen(amount, currency);
       const alreadySpent = getCategorySpentYen(targetMonth, cat, editingTxId);
       const wouldBeSpent = alreadySpent + newAmtYen;
@@ -5021,7 +5035,7 @@ document.getElementById('entryForm').addEventListener('submit', async e=>{
     const newBudgetYen = getCategoryBudgetYen(targetMonth, cat);
     const newAmtYen = toYen(amount, currency);
     const alreadySpent = getCategorySpentYen(targetMonth, cat, editingTxId);
-    if (newBudgetYen > 0 && (alreadySpent + newAmtYen) > newBudgetYen) {
+    if (hasCategoryBudgetSet(targetMonth, cat) && (alreadySpent + newAmtYen) > newBudgetYen) {
       wasOverBudgetSave = true;
     }
   }
@@ -5368,7 +5382,8 @@ function analyzeBudgetAngel() {
     const cur = budgetCurs[cat] || 'JPY';
     const budgetYen = toYen(rawBudget, cur);
     const spent = current.byCat[cat] || 0;
-    return { cat, budget: budgetYen, spent, left: budgetYen - spent, pct: budgetYen > 0 ? (spent / budgetYen) * 100 : 0, hasBudget: budgetYen > 0 };
+    const hasBudget = hasCategoryBudgetSet(m, cat);
+    return { cat, budget: budgetYen, spent, left: budgetYen - spent, pct: budgetPct(spent, budgetYen, hasBudget), hasBudget };
   });
   const overBudget = budgetEntries.filter(x => x.hasBudget && x.left < 0).sort((a,b) => a.left - b.left);
   const nearLimit = budgetEntries.filter(x => x.hasBudget && x.pct >= 80 && x.left >= 0).sort((a,b) => b.pct - a.pct);
@@ -6688,17 +6703,19 @@ function renderBudgetProgress(byCat) {
   const m = curMonth();
   const budgets = m.budgets || {};
   const budgetCurs = m.budgetCurrencies || {};
-  const cats=[...new Set([...Object.keys(budgets),...Object.keys(byCat)])].filter(c=>Number(budgets[c]||0)>0||Number(byCat[c]||0)>0);
+  const cats=[...new Set([...Object.keys(budgets),...Object.keys(byCat)])].filter(c=>hasCategoryBudgetSet(m, c)||Number(byCat[c]||0)>0);
   if(!cats.length){ el.innerHTML='<div class="empty-state"><div class="e-icon">📋</div>Set budgets in Budget tab</div>'; return; }
   el.innerHTML=cats.map(cat=>{
     const rawBudget=Number(budgets[cat]||0);
     const curCode=budgetCurs[cat]||'JPY';
     const budget=toYen(rawBudget, curCode);
     const spent=Number(byCat[cat]||0);
-    const pct=budget>0?Math.min((spent/budget)*100,100):(spent>0?100:0);
+    const hasBudget=hasCategoryBudgetSet(m, cat);
+    const rawPct=budgetPct(spent, budget, hasBudget);
+    const pct=Math.min(rawPct,100);
     const fill=pct<50?'fill-ok':pct<80?'fill-warn':'fill-over';
     return `<div class="budget-row">
-      <div class="brow-header"><span class="brow-label">${CAT_ICONS[cat]||''} ${escH(cat)}</span><span class="brow-nums">${fmt(spent)}${budget?' / '+fmt(budget):''}</span></div>
+      <div class="brow-header"><span class="brow-label">${CAT_ICONS[cat]||''} ${escH(cat)}</span><span class="brow-nums">${fmt(spent)}${hasBudget?' / '+fmt(budget):''}</span></div>
       <div class="progress-bar"><div class="progress-fill ${fill}" style="width:${pct}%"></div></div>
     </div>`;
   }).join('');
@@ -6716,7 +6733,7 @@ function renderBudgetLeftByCategory(byCat) {
   const budgetCurs = m.budgetCurrencies || {};
 
   // Build a list of all categories that either have a budget set or have any spending
-  const cats = EXPENSE_CATS.filter(c => Number(budgets[c] || 0) > 0 || Number(byCat[c] || 0) > 0);
+  const cats = EXPENSE_CATS.filter(c => hasCategoryBudgetSet(m, c) || Number(byCat[c] || 0) > 0);
 
   if(!cats.length){
     el.innerHTML = '<div class="empty-state"><div class="e-icon">💵</div>Set budgets in the Budget tab to see what\'s left</div>';
@@ -6729,12 +6746,13 @@ function renderBudgetLeftByCategory(byCat) {
     const budgetYen = toYen(rawBudget, curCode);
     const spent = Number(byCat[cat] || 0);
     const left = budgetYen - spent;
-    const pct = budgetYen > 0 ? Math.round((spent / budgetYen) * 100) : 0;
+    const hasBudget = hasCategoryBudgetSet(m, cat);
+    const pct = Math.round(budgetPct(spent, budgetYen, hasBudget));
     const prog = Math.min(100, Math.max(0, pct));
 
     // Color logic: green if plenty left, orange if running low, red if over
     let leftColor, statusBg, statusText, fillCls;
-    if (budgetYen === 0) {
+    if (!hasBudget) {
       leftColor = 'var(--text-soft)'; statusBg = '#94a3b8'; statusText = 'No budget'; fillCls = 'fill-warn';
     } else if (left < 0) {
       leftColor = 'var(--danger)'; statusBg = '#c0392b'; statusText = 'Over budget'; fillCls = 'fill-over';
@@ -6753,7 +6771,7 @@ function renderBudgetLeftByCategory(byCat) {
           <div class="blc-icon" style="background:${catColor}">${icon}</div>
           <div style="min-width:0">
             <div class="blc-name">${escH(cat)}</div>
-            <div class="blc-budget">${budgetYen > 0 ? `Budget ${fmt(budgetYen)}${curCode === 'EUR' ? ` (€${rawBudget.toLocaleString()})` : ''}` : 'No budget set'}</div>
+            <div class="blc-budget">${hasBudget ? `Budget ${fmt(budgetYen)}${curCode === 'EUR' ? ` (€${rawBudget.toLocaleString()})` : ''}` : 'No budget set'}</div>
           </div>
         </div>
         <span class="blc-status" style="background:${statusBg}">${statusText}</span>
@@ -6765,10 +6783,10 @@ function renderBudgetLeftByCategory(byCat) {
         </div>
         <div style="text-align:right">
           <div class="blc-num-label">Spent</div>
-          <div class="blc-num-spent">${fmt(spent)} ${budgetYen > 0 ? `<span class="pct">(${pct}%)</span>` : ''}</div>
+          <div class="blc-num-spent">${fmt(spent)} ${hasBudget ? `<span class="pct">(${pct}%)</span>` : ''}</div>
         </div>
       </div>
-      ${budgetYen > 0 ? `<div class="progress-bar" style="height:6px"><div class="progress-fill ${fillCls}" style="width:${prog}%"></div></div>` : ''}
+      ${hasBudget ? `<div class="progress-bar" style="height:6px"><div class="progress-fill ${fillCls}" style="width:${prog}%"></div></div>` : ''}
     </div>`;
   }).join('')}</div>`;
 }
@@ -7160,10 +7178,11 @@ function renderBudgetCards() {
     const budgetYen = toYen(budget, curCode);
     const spent=Number(byCat[cat]||0);
     const left=budgetYen-spent;
-    const pct=budgetYen>0?Math.round((spent/budgetYen)*100):0;
+    const hasBudget=hasCategoryBudgetSet(m, cat);
+    const pct=Math.round(budgetPct(spent, budgetYen, hasBudget));
     const prog=Math.min(100,Math.max(0,pct));
-    const cls=pct>100?'fill-over':pct>80?'fill-warn':'fill-ok';
-    const pillCls=pct>100?'#c0392b':pct>80?'#e67e22':'#27ae60';
+    const cls=hasBudget && spent>budgetYen?'fill-over':pct>80?'fill-warn':'fill-ok';
+    const pillCls=hasBudget && spent>budgetYen?'#c0392b':pct>80?'#e67e22':'#27ae60';
     return `<div class="budget-compact-card" style="border:1.5px solid var(--border)">
       <div class="budget-compact-head">
         <div>
