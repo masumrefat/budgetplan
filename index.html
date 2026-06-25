@@ -2910,6 +2910,45 @@ tr:hover td {
   }
 }
 
+
+/* ── Period category spending analysis ── */
+.period-category-controls {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  align-items: end;
+  margin-bottom: 14px;
+}
+.period-category-controls .form-group {
+  margin: 0;
+  min-width: 130px;
+  flex: 1;
+}
+.period-category-controls .form-group.small { flex: 0 1 125px; }
+.period-category-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface2);
+  font-size: 0.82rem;
+  color: var(--text-muted);
+  min-height: 42px;
+}
+.period-category-chart-wrap {
+  height: 360px;
+  position: relative;
+}
+.period-category-table { margin-top: 16px; }
+@media (max-width: 700px) {
+  .period-category-controls { display: grid; grid-template-columns: 1fr 1fr; }
+  .period-category-controls .form-group, .period-category-controls .form-group.small { min-width: 0; width: 100%; }
+  .period-category-check { grid-column: 1 / -1; }
+  .period-category-chart-wrap { height: 420px; }
+}
+
 </style>
 <script>
 // Apply saved theme immediately (before paint) to prevent flash of wrong theme
@@ -3304,6 +3343,38 @@ tr:hover td {
       <div class="card-title">🏆 Top Categories</div>
       <div id="catChartWrap2" style="min-height:260px"></div>
     </div>
+  </div>
+
+  <div class="card">
+    <div class="section-head">
+      <div class="card-title">📊 Category Spending by Period</div>
+      <div style="font-size:0.8rem;color:var(--text-soft)">Choose whole year or a selected month range</div>
+    </div>
+    <div class="period-category-controls">
+      <div class="form-group small">
+        <label>From</label>
+        <select id="periodCatFrom" onchange="renderPeriodCategoryAnalysis()"></select>
+      </div>
+      <div class="form-group small">
+        <label>To</label>
+        <select id="periodCatTo" onchange="renderPeriodCategoryAnalysis()"></select>
+      </div>
+      <div class="form-group">
+        <label>Chart shows</label>
+        <select id="periodCatMetric" onchange="renderPeriodCategoryAnalysis()">
+          <option value="total">Total spending</option>
+          <option value="average">Average per month</option>
+          <option value="median">Median per month</option>
+        </select>
+      </div>
+      <label class="period-category-check" title="Normally big yearly-audit purchases are separate. Turn this on only if you want them included in this period chart.">
+        <input id="periodCatIncludeAudit" type="checkbox" onchange="renderPeriodCategoryAnalysis()">
+        Include big expenses
+      </label>
+    </div>
+    <div id="periodCategoryStatus" style="margin-bottom:14px"></div>
+    <div class="period-category-chart-wrap"><canvas id="periodCategoryChart"></canvas></div>
+    <div id="periodCategoryTable" class="period-category-table"></div>
   </div>
 
   <div class="card">
@@ -4479,11 +4550,10 @@ function showAdjustBudgetsStep() {
     const spent = byCat[c] || 0;
     const left = budgetYen - spent;
     const isHighlight = c === ctx.category;
-    const hasBudget = hasCategoryBudgetSet(m, c);
-    const isOver = hasBudget && left < 0;
+    const isOver = budgetYen > 0 && left < 0;
     const rowClass = isHighlight ? 'highlight' : (isOver ? 'over' : '');
-    const metaText = hasBudget
-      ? `Budget ${fmt(budgetYen)} · Spent ${fmt(spent)} · ${left >= 0 ? `${fmt(left)} left` : `${fmt(Math.abs(left))} over`}`
+    const metaText = budgetYen > 0
+      ? `Spent ${fmt(spent)} · ${left >= 0 ? `${fmt(left)} left` : `${fmt(Math.abs(left))} over`}`
       : `Spent ${fmt(spent)} · No budget set`;
     return `<div class="obm-adjust-row ${rowClass}" data-cat="${escH(c)}">
       <div class="obm-adjust-name">
@@ -4515,8 +4585,8 @@ function showAdjustBudgetsStep() {
     const wouldBeSpent = ctx.alreadySpent + ctx.newAmtYen;
     const newLeft = newBudgetYen - wouldBeSpent;
     const sumEl = document.getElementById('obmAdjustSummary');
-    if (newBudgetYen === 0 && wouldBeSpent > 0) {
-      sumEl.innerHTML = `<strong>⚠ ${escH(targetCat)}</strong>: budget is ${fmt(0)}, so this transaction will be over by <strong>${fmt(wouldBeSpent)}</strong>. Increase the budget or transfer money.`;
+    if (newBudgetYen === 0) {
+      sumEl.innerHTML = `<strong>${escH(targetCat)}</strong>: no budget set. The transaction will save without a budget limit.`;
     } else if (newLeft >= 0) {
       sumEl.innerHTML = `<strong>✓ ${escH(targetCat)}</strong>: new budget ${fmt(newBudgetYen)} fits the transaction. <strong>${fmt(newLeft)}</strong> will remain after saving.`;
     } else {
@@ -4953,19 +5023,6 @@ function getCategoryBudgetYen(monthObj, category) {
   return toYen(amt, cur);
 }
 
-// A budget is considered "set" when the category exists in the budgets object.
-// This is important because a 0 budget is a real budget limit: any spending
-// should be treated as over-budget, not as "No budget".
-function hasCategoryBudgetSet(monthObj, category) {
-  return !!(monthObj && monthObj.budgets && Object.prototype.hasOwnProperty.call(monthObj.budgets, category));
-}
-
-function budgetPct(spentYen, budgetYen, hasBudget) {
-  if (!hasBudget) return 0;
-  if (budgetYen > 0) return (spentYen / budgetYen) * 100;
-  return spentYen > 0 ? 101 : 0;
-}
-
 
 function isYearlyAuditOnly(t) {
   return !!(t && (t.auditOnly === true || t.scope === 'yearly_audit'));
@@ -5004,7 +5061,7 @@ document.getElementById('entryForm').addEventListener('submit', async e=>{
   // The user can: cancel, adjust budgets, or save anyway.
   if (type === 'expense' && !auditOnly && !budgetOverrideConfirmed) {
     const budgetYen = getCategoryBudgetYen(targetMonth, cat);
-    if (hasCategoryBudgetSet(targetMonth, cat)) {
+    if (budgetYen > 0) {
       const newAmtYen = toYen(amount, currency);
       const alreadySpent = getCategorySpentYen(targetMonth, cat, editingTxId);
       const wouldBeSpent = alreadySpent + newAmtYen;
@@ -5035,7 +5092,7 @@ document.getElementById('entryForm').addEventListener('submit', async e=>{
     const newBudgetYen = getCategoryBudgetYen(targetMonth, cat);
     const newAmtYen = toYen(amount, currency);
     const alreadySpent = getCategorySpentYen(targetMonth, cat, editingTxId);
-    if (hasCategoryBudgetSet(targetMonth, cat) && (alreadySpent + newAmtYen) > newBudgetYen) {
+    if (newBudgetYen > 0 && (alreadySpent + newAmtYen) > newBudgetYen) {
       wasOverBudgetSave = true;
     }
   }
@@ -5382,8 +5439,7 @@ function analyzeBudgetAngel() {
     const cur = budgetCurs[cat] || 'JPY';
     const budgetYen = toYen(rawBudget, cur);
     const spent = current.byCat[cat] || 0;
-    const hasBudget = hasCategoryBudgetSet(m, cat);
-    return { cat, budget: budgetYen, spent, left: budgetYen - spent, pct: budgetPct(spent, budgetYen, hasBudget), hasBudget };
+    return { cat, budget: budgetYen, spent, left: budgetYen - spent, pct: budgetYen > 0 ? (spent / budgetYen) * 100 : 0, hasBudget: budgetYen > 0 };
   });
   const overBudget = budgetEntries.filter(x => x.hasBudget && x.left < 0).sort((a,b) => a.left - b.left);
   const nearLimit = budgetEntries.filter(x => x.hasBudget && x.pct >= 80 && x.left >= 0).sort((a,b) => b.pct - a.pct);
@@ -6703,19 +6759,17 @@ function renderBudgetProgress(byCat) {
   const m = curMonth();
   const budgets = m.budgets || {};
   const budgetCurs = m.budgetCurrencies || {};
-  const cats=[...new Set([...Object.keys(budgets),...Object.keys(byCat)])].filter(c=>hasCategoryBudgetSet(m, c)||Number(byCat[c]||0)>0);
+  const cats=[...new Set([...Object.keys(budgets),...Object.keys(byCat)])].filter(c=>Number(budgets[c]||0)>0||Number(byCat[c]||0)>0);
   if(!cats.length){ el.innerHTML='<div class="empty-state"><div class="e-icon">📋</div>Set budgets in Budget tab</div>'; return; }
   el.innerHTML=cats.map(cat=>{
     const rawBudget=Number(budgets[cat]||0);
     const curCode=budgetCurs[cat]||'JPY';
     const budget=toYen(rawBudget, curCode);
     const spent=Number(byCat[cat]||0);
-    const hasBudget=hasCategoryBudgetSet(m, cat);
-    const rawPct=budgetPct(spent, budget, hasBudget);
-    const pct=Math.min(rawPct,100);
+    const pct=budget>0?Math.min((spent/budget)*100,100):(spent>0?100:0);
     const fill=pct<50?'fill-ok':pct<80?'fill-warn':'fill-over';
     return `<div class="budget-row">
-      <div class="brow-header"><span class="brow-label">${CAT_ICONS[cat]||''} ${escH(cat)}</span><span class="brow-nums">${fmt(spent)}${hasBudget?' / '+fmt(budget):''}</span></div>
+      <div class="brow-header"><span class="brow-label">${CAT_ICONS[cat]||''} ${escH(cat)}</span><span class="brow-nums">${fmt(spent)}${budget?' / '+fmt(budget):''}</span></div>
       <div class="progress-bar"><div class="progress-fill ${fill}" style="width:${pct}%"></div></div>
     </div>`;
   }).join('');
@@ -6733,7 +6787,7 @@ function renderBudgetLeftByCategory(byCat) {
   const budgetCurs = m.budgetCurrencies || {};
 
   // Build a list of all categories that either have a budget set or have any spending
-  const cats = EXPENSE_CATS.filter(c => hasCategoryBudgetSet(m, c) || Number(byCat[c] || 0) > 0);
+  const cats = EXPENSE_CATS.filter(c => Number(budgets[c] || 0) > 0 || Number(byCat[c] || 0) > 0);
 
   if(!cats.length){
     el.innerHTML = '<div class="empty-state"><div class="e-icon">💵</div>Set budgets in the Budget tab to see what\'s left</div>';
@@ -6746,13 +6800,12 @@ function renderBudgetLeftByCategory(byCat) {
     const budgetYen = toYen(rawBudget, curCode);
     const spent = Number(byCat[cat] || 0);
     const left = budgetYen - spent;
-    const hasBudget = hasCategoryBudgetSet(m, cat);
-    const pct = Math.round(budgetPct(spent, budgetYen, hasBudget));
+    const pct = budgetYen > 0 ? Math.round((spent / budgetYen) * 100) : 0;
     const prog = Math.min(100, Math.max(0, pct));
 
     // Color logic: green if plenty left, orange if running low, red if over
     let leftColor, statusBg, statusText, fillCls;
-    if (!hasBudget) {
+    if (budgetYen === 0) {
       leftColor = 'var(--text-soft)'; statusBg = '#94a3b8'; statusText = 'No budget'; fillCls = 'fill-warn';
     } else if (left < 0) {
       leftColor = 'var(--danger)'; statusBg = '#c0392b'; statusText = 'Over budget'; fillCls = 'fill-over';
@@ -6771,7 +6824,7 @@ function renderBudgetLeftByCategory(byCat) {
           <div class="blc-icon" style="background:${catColor}">${icon}</div>
           <div style="min-width:0">
             <div class="blc-name">${escH(cat)}</div>
-            <div class="blc-budget">${hasBudget ? `Budget ${fmt(budgetYen)}${curCode === 'EUR' ? ` (€${rawBudget.toLocaleString()})` : ''}` : 'No budget set'}</div>
+            <div class="blc-budget">${budgetYen > 0 ? `Budget ${fmt(budgetYen)}${curCode === 'EUR' ? ` (€${rawBudget.toLocaleString()})` : ''}` : 'No budget set'}</div>
           </div>
         </div>
         <span class="blc-status" style="background:${statusBg}">${statusText}</span>
@@ -6783,10 +6836,10 @@ function renderBudgetLeftByCategory(byCat) {
         </div>
         <div style="text-align:right">
           <div class="blc-num-label">Spent</div>
-          <div class="blc-num-spent">${fmt(spent)} ${hasBudget ? `<span class="pct">(${pct}%)</span>` : ''}</div>
+          <div class="blc-num-spent">${fmt(spent)} ${budgetYen > 0 ? `<span class="pct">(${pct}%)</span>` : ''}</div>
         </div>
       </div>
-      ${hasBudget ? `<div class="progress-bar" style="height:6px"><div class="progress-fill ${fillCls}" style="width:${prog}%"></div></div>` : ''}
+      ${budgetYen > 0 ? `<div class="progress-bar" style="height:6px"><div class="progress-fill ${fillCls}" style="width:${prog}%"></div></div>` : ''}
     </div>`;
   }).join('')}</div>`;
 }
@@ -7178,11 +7231,10 @@ function renderBudgetCards() {
     const budgetYen = toYen(budget, curCode);
     const spent=Number(byCat[cat]||0);
     const left=budgetYen-spent;
-    const hasBudget=hasCategoryBudgetSet(m, cat);
-    const pct=Math.round(budgetPct(spent, budgetYen, hasBudget));
+    const pct=budgetYen>0?Math.round((spent/budgetYen)*100):0;
     const prog=Math.min(100,Math.max(0,pct));
-    const cls=hasBudget && spent>budgetYen?'fill-over':pct>80?'fill-warn':'fill-ok';
-    const pillCls=hasBudget && spent>budgetYen?'#c0392b':pct>80?'#e67e22':'#27ae60';
+    const cls=pct>100?'fill-over':pct>80?'fill-warn':'fill-ok';
+    const pillCls=pct>100?'#c0392b':pct>80?'#e67e22':'#27ae60';
     return `<div class="budget-compact-card" style="border:1.5px solid var(--border)">
       <div class="budget-compact-head">
         <div>
@@ -7290,6 +7342,7 @@ function deletePlannedIncome(id) {
 let familyHealthChartInstance = null;
 let yearlyBudgetAuditChartInstance = null;
 let yearlyBigExpenseCategoryChartInstance = null;
+let periodCategoryChartInstance = null;
 
 function getYearSummaryData(year=currentYear) {
   const yd = ensureYearExists(year);
@@ -7807,6 +7860,168 @@ function renderYearlyBigExpenseOverview() {
   });
 }
 
+
+function medianNumber(values) {
+  const arr = (values || []).map(Number).filter(v => Number.isFinite(v)).sort((a,b)=>a-b);
+  if(!arr.length) return 0;
+  const mid = Math.floor(arr.length / 2);
+  return arr.length % 2 ? arr[mid] : (arr[mid - 1] + arr[mid]) / 2;
+}
+
+function ensurePeriodCategoryControls() {
+  const fromSel = document.getElementById('periodCatFrom');
+  const toSel = document.getElementById('periodCatTo');
+  if(!fromSel || !toSel) return;
+  if(!fromSel.options.length) {
+    const opts = MONTHS.map((m,i)=>`<option value="${i}">${m}</option>`).join('');
+    fromSel.innerHTML = opts;
+    toSel.innerHTML = opts;
+    fromSel.value = '0';
+    toSel.value = '11';
+  }
+}
+
+function getPeriodCategorySpendingData(year=currentYear, startIdx=0, endIdx=11, includeAudit=false) {
+  const yd = ensureYearExists(year);
+  const start = Math.max(0, Math.min(11, Number(startIdx) || 0));
+  const end = Math.max(0, Math.min(11, Number(endIdx) || 11));
+  const a = Math.min(start, end);
+  const b = Math.max(start, end);
+  const monthIndexes = Array.from({length: b - a + 1}, (_, i) => a + i);
+  const byCat = {};
+  EXPENSE_CATS.forEach(cat => {
+    byCat[cat] = { category: cat, monthly: monthIndexes.map(() => 0), itemCount: 0, auditCount: 0 };
+  });
+
+  monthIndexes.forEach((monthIdx, localIdx) => {
+    const m = (yd.months || [])[monthIdx] || createMonthTemplate(MONTHS[monthIdx]);
+    (m.transactions || []).filter(t => t.type === 'expense').forEach(t => {
+      const monthly = countsInMonthly(t);
+      const audit = isYearlyAuditOnly(t);
+      if(!monthly && !(includeAudit && audit)) return;
+      const cat = t.category || 'Other';
+      if(!byCat[cat]) byCat[cat] = { category: cat, monthly: monthIndexes.map(() => 0), itemCount: 0, auditCount: 0 };
+      byCat[cat].monthly[localIdx] += txAmountYen(t);
+      byCat[cat].itemCount += 1;
+      if(audit) byCat[cat].auditCount += 1;
+    });
+    (m.fixedExpenses || []).forEach(fe => {
+      const cat = fe.category || 'Other';
+      if(!byCat[cat]) byCat[cat] = { category: cat, monthly: monthIndexes.map(() => 0), itemCount: 0, auditCount: 0 };
+      byCat[cat].monthly[localIdx] += toYen(fe.amount, fe.currency || 'JPY');
+      byCat[cat].itemCount += 1;
+    });
+  });
+
+  const monthsCount = monthIndexes.length || 1;
+  const rows = Object.values(byCat).map(item => {
+    const total = item.monthly.reduce((s,v)=>s+v,0);
+    const average = total / monthsCount;
+    const median = medianNumber(item.monthly);
+    const highest = item.monthly.length ? Math.max(...item.monthly) : 0;
+    const activeMonths = item.monthly.filter(v => v > 0).length;
+    return { ...item, total, average, median, highest, activeMonths };
+  }).filter(r => r.total > 0).sort((x,y)=>y.total-x.total);
+  const totalYen = rows.reduce((s,r)=>s+r.total,0);
+  const periodLabel = a === b ? `${MONTHS[a]} ${year}` : `${MONTHS[a]}–${MONTHS[b]} ${year}`;
+  return { rows, totalYen, startIdx: a, endIdx: b, monthsCount, periodLabel, includeAudit };
+}
+
+function renderPeriodCategoryAnalysis() {
+  const statusEl = document.getElementById('periodCategoryStatus');
+  const tableEl = document.getElementById('periodCategoryTable');
+  const canvas = document.getElementById('periodCategoryChart');
+  if(!statusEl || !tableEl || !canvas) return;
+  ensurePeriodCategoryControls();
+  if(periodCategoryChartInstance) { periodCategoryChartInstance.destroy(); periodCategoryChartInstance = null; }
+  if(!canViewPrivateData()) {
+    statusEl.innerHTML = '<div class="empty-state" style="padding:10px">🔒 Login to view category spending by period</div>';
+    tableEl.innerHTML = '';
+    const ctx = canvas.getContext('2d'); ctx.clearRect(0,0,canvas.width,canvas.height);
+    return;
+  }
+  const fromSel = document.getElementById('periodCatFrom');
+  const toSel = document.getElementById('periodCatTo');
+  const metricSel = document.getElementById('periodCatMetric');
+  const includeAuditEl = document.getElementById('periodCatIncludeAudit');
+  const metric = metricSel?.value || 'total';
+  const includeAudit = !!includeAuditEl?.checked;
+  const data = getPeriodCategorySpendingData(currentYear, fromSel?.value || 0, toSel?.value || 11, includeAudit);
+  const metricLabel = metric === 'average' ? 'Average per month' : metric === 'median' ? 'Median per month' : 'Total spending';
+  const metricDesc = metric === 'median'
+    ? 'Median means the middle month in the selected period, including zero-spending months.'
+    : metric === 'average'
+      ? 'Average is total spending divided by the number of selected months.'
+      : 'Total is the full spending during the selected period.';
+  const biggest = data.rows[0];
+  const avgAllCats = data.rows.length ? data.totalYen / data.rows.length : 0;
+  statusEl.innerHTML = `
+    <div class="angel-grid" style="margin:0 0 10px 0">
+      <div class="angel-metric"><div class="angel-metric-label">Period</div><div class="angel-metric-value">${escH(data.periodLabel)}</div></div>
+      <div class="angel-metric"><div class="angel-metric-label">Total spending</div><div class="angel-metric-value amount-neg">${fmt(data.totalYen)}</div></div>
+      <div class="angel-metric"><div class="angel-metric-label">Average/category</div><div class="angel-metric-value">${fmt(avgAllCats)}</div></div>
+      <div class="angel-metric"><div class="angel-metric-label">Biggest category</div><div class="angel-metric-value">${biggest ? escH(biggest.category) : '—'}</div></div>
+    </div>
+    <div style="font-size:0.82rem;color:var(--text-soft);background:var(--surface2);border-radius:10px;padding:10px 12px">
+      Chart mode: <strong>${metricLabel}</strong>. ${metricDesc} ${includeAudit ? 'Big yearly-audit expenses are included.' : 'Big yearly-audit expenses are excluded.'}
+    </div>`;
+
+  if(!data.rows.length) {
+    tableEl.innerHTML = '<div class="empty-state" style="padding:16px">No spending found for this period.</div>';
+    const ctx = canvas.getContext('2d'); ctx.clearRect(0,0,canvas.width,canvas.height);
+    return;
+  }
+
+  const chartRows = data.rows.slice(0, 12);
+  const labels = chartRows.map(r => `${CAT_ICONS[r.category] || ''} ${r.category}`);
+  const values = chartRows.map(r => Number(convertFromYen(r[metric]).toFixed(2)));
+  const ctx = canvas.getContext('2d');
+  periodCategoryChartInstance = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [{
+        label: metricLabel + (displayCurrency === 'EUR' ? ' (€)' : ' (¥)'),
+        data: values,
+        backgroundColor: chartRows.map(r => CAT_COLORS[r.category] || 'rgba(45,90,61,0.35)'),
+        borderColor: chartRows.map(() => 'rgba(120,102,84,0.35)'),
+        borderWidth: 1,
+        borderRadius: 8
+      }]
+    },
+    options: {
+      indexAxis: 'y',
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { beginAtZero: true, title: { display: true, text: displayCurrency === 'EUR' ? 'Amount (€)' : 'Amount (¥)' } },
+        y: { grid: { display: false } }
+      }
+    }
+  });
+
+  const rowsHtml = data.rows.map(r => {
+    const pct = data.totalYen ? Math.round((r.total / data.totalYen) * 100) : 0;
+    return `<tr>
+      <td><span class="cat-badge" style="background:${CAT_COLORS[r.category] || '#eee'}">${CAT_ICONS[r.category] || ''} ${escH(r.category)}</span></td>
+      <td style="text-align:right;font-weight:700">${fmt(r.total)}</td>
+      <td style="text-align:right">${fmt(r.average)}</td>
+      <td style="text-align:right">${fmt(r.median)}</td>
+      <td style="text-align:right">${fmt(r.highest)}</td>
+      <td style="text-align:right">${r.activeMonths}/${data.monthsCount}</td>
+      <td style="text-align:right">${pct}%</td>
+    </tr>`;
+  }).join('');
+  tableEl.innerHTML = `
+    <div class="tbl-wrap">
+      <table>
+        <thead><tr><th>Category</th><th style="text-align:right">Total</th><th style="text-align:right">Average / month</th><th style="text-align:right">Median / month</th><th style="text-align:right">Highest month</th><th style="text-align:right">Months used</th><th style="text-align:right">Share</th></tr></thead>
+        <tbody>${rowsHtml}</tbody>
+      </table>
+    </div>`;
+}
+
 function renderChartsPage() {
   renderYearScroller();
   if(!canViewPrivateData()){
@@ -7826,6 +8041,7 @@ function renderChartsPage() {
       </div>
     </div>`;
     renderYearSummary();
+    renderPeriodCategoryAnalysis();
     renderFamilyHealthGraph();
     renderYearlyBudgetAuditGraph();
     renderYearlyBigExpenseOverview();
@@ -7872,6 +8088,7 @@ function renderChartsPage() {
     </div>
   </div>`;
   renderYearSummary();
+  renderPeriodCategoryAnalysis();
   renderFamilyHealthGraph();
   renderYearlyBudgetAuditGraph();
   renderYearlyBigExpenseOverview();
